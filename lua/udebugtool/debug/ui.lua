@@ -22,6 +22,14 @@ local state = {
 
 local truncate
 
+local function shared_output_panel()
+	local panel = rawget(_G, "__ucore_output_panel_api")
+	if type(panel) == "table" and type(panel.open_tab) == "function" then
+		return panel
+	end
+	return nil
+end
+
 local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
 end
@@ -196,6 +204,10 @@ local function open_right()
 end
 
 local function open_bottom()
+	if shared_output_panel() then
+		return nil, nil
+	end
+
 	local buf = ensure_buf(state.bottom, "UDebugToolControls", "udebugtool-debug-controls")
 	if valid_win(state.bottom.win) then
 		vim.api.nvim_win_set_height(state.bottom.win, ui_layout().tray_height)
@@ -765,53 +777,19 @@ local function render_left(session)
 	end
 	push_line(builder, "")
 
-	push_line(builder, "Threads", { group = "UDebugToolSection" })
-	if not session then
-		push_line(builder, "  No active session", { group = "UDebugToolMuted" })
-	else
-		local thread_ids = sorted_thread_ids(session)
-		if vim.tbl_isempty(thread_ids) then
-			push_line(builder, "  Threads are loading...", { group = "UDebugToolMuted" })
-		else
-			for _, thread_id in ipairs(thread_ids) do
-				local thread = session.threads[thread_id]
-				local stopped = session.stopped_thread_id == thread_id
-				local thread_key = "thread:" .. tostring(thread_id)
-				local expanded = thread_expanded(thread_id, stopped)
-				local prefix = stopped and "*" or "-"
-				local marker = expanded and "[-]" or "[+]"
-				push_line(builder, string.format("  %s %s Thread %s  %s", prefix, marker, tostring(thread_id), tostring(thread and thread.name or "")), {
-					group = stopped and "UDebugToolCurrentStop" or "UDebugToolLabel",
-					item = {
-						kind = "thread",
-						thread_id = thread_id,
-						key = thread_key,
-					},
-				})
-
-				if expanded then
-					local frames = thread and thread.frames or {}
-					if stopped and vim.tbl_isempty(frames) then
-						push_line(builder, "      loading frames...", { group = "UDebugToolMuted" })
-					end
-					for index, frame in ipairs(frames) do
-						local current = session.current_frame and session.current_frame.id == frame.id
-						local frame_marker = current and ">" or " "
-						push_line(builder, string.format("    %s %02d %s", frame_marker, index, truncate(frame.name or "<frame>", 28)), {
-							group = current and "UDebugToolCurrentStop" or "UDebugToolValue",
-							item = {
-								kind = "frame",
-								thread_id = thread_id,
-								frame = frame,
-							},
-						})
-						push_line(builder, "        " .. frame_location(frame), { group = "UDebugToolMuted" })
-					end
-				end
-			end
-		end
-	end
-
+	push_line(builder, "Controls", { group = "UDebugToolSection" })
+	push_line(builder, "  [SPC da] Attach", { group = "UDebugToolValue" })
+	push_line(builder, "  [SPC de] Editor", { group = "UDebugToolValue" })
+	push_line(builder, "  [SPC db] Breakpoint", { group = "UDebugToolValue" })
+	push_line(builder, "  [SPC dc] Continue", { group = "UDebugToolValue" })
+	push_line(builder, "  [SPC ds] Stop", { group = "UDebugToolValue" })
+	push_line(builder, "  [SPC do] Step Over", { group = "UDebugToolValue" })
+	push_line(builder, "  [SPC di] Step Into", { group = "UDebugToolValue" })
+	push_line(builder, "  [SPC du] Step Out", { group = "UDebugToolValue" })
+	push_line(builder, "  [CR] Jump / Expand", { group = "UDebugToolValue" })
+	push_line(builder, "  [a] Add Watch", { group = "UDebugToolValue" })
+	push_line(builder, "  [x] Delete Watch", { group = "UDebugToolValue" })
+	push_line(builder, "  [r] Refresh", { group = "UDebugToolValue" })
 	push_line(builder, "")
 	push_line(builder, "Breakpoints", { group = "UDebugToolSection" })
 	local breakpoints = sorted_breakpoints()
@@ -1022,6 +1000,10 @@ local function render_right(session)
 end
 
 local function render_bottom(session)
+	if shared_output_panel() then
+		return
+	end
+
 	local _, buf = open_bottom()
 	local builder = new_builder()
 
@@ -1069,7 +1051,9 @@ end
 local function render_all(session)
 	render_left(session)
 	render_right(session)
-	render_bottom(session)
+	if not shared_output_panel() then
+		render_bottom(session)
+	end
 end
 
 local function jump_to_breakpoint(path, line)
@@ -1159,7 +1143,9 @@ function M.open()
 	sync_watches()
 	open_left()
 	open_right()
-	open_bottom()
+	if not shared_output_panel() then
+		open_bottom()
+	end
 end
 
 function M.close()

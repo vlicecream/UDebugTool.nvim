@@ -349,8 +349,8 @@ local function build_output_sink(title)
 			kind = "panel",
 			panel = panel,
 			key = panel.open_tab({
-				key = "udebugtool:" .. tostring(vim.loop.hrtime()),
-				title = title,
+				key = "workspace:build",
+				title = "Build",
 				kind = "build",
 				focus = true,
 			}),
@@ -493,7 +493,25 @@ local function start_build(args, callback)
 		build_buf = sink.buf
 	end
 
-	append_build_chunk(sink, ctx.root, "Project: " .. ctx.uproject .. "\nEngine:  " .. ctx.engine_root .. "\nCommand: " .. table.concat(cmd, " ") .. "\n", true)
+	if sink.kind == "panel" then
+		sink.panel.replace(sink.key, {
+			"Project: " .. ctx.uproject,
+			"Engine:  " .. ctx.engine_root,
+			"Command: " .. table.concat(cmd, " "),
+			"",
+		}, {
+			title = "Build",
+			kind = "build",
+			focus = true,
+			line_groups = {
+				"UCoreOutputCommand",
+				"UCoreOutputCommand",
+				"UCoreOutputCommand",
+			},
+		})
+	else
+		append_build_chunk(sink, ctx.root, "Project: " .. ctx.uproject .. "\nEngine:  " .. ctx.engine_root .. "\nCommand: " .. table.concat(cmd, " ") .. "\n", true)
+	end
 
 	local project_root = ctx.root
 	build_job = vim.system(cmd, {

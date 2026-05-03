@@ -47,11 +47,11 @@ local function shared_output_panel()
 end
 
 local function debug_output_key(root)
-	return "udebugtool:debug:" .. tostring(root or "session")
+	return "workspace:unreal"
 end
 
 local function debug_stack_key(root)
-	return "udebugtool:stack:" .. tostring(root or "session")
+	return "workspace:debug"
 end
 
 local function normalize(path)
@@ -80,8 +80,8 @@ local function append_debug_output(root, message, opts)
 	opts = opts or {}
 	if opts.replace then
 		panel.replace(debug_output_key(root), { tostring(message) }, {
-			title = opts.title or "UDebugTool Debug",
-			kind = "debug",
+			title = opts.title or "Unreal",
+			kind = opts.kind or "unreal",
 			focus = opts.focus == true,
 			status = opts.status or "running",
 			line_groups = { opts.group or "UCoreOutputInfo" },
@@ -90,8 +90,8 @@ local function append_debug_output(root, message, opts)
 	end
 
 	panel.append(debug_output_key(root), { tostring(message) }, {
-		title = opts.title or "UDebugTool Debug",
-		kind = "debug",
+		title = opts.title or "Unreal",
+		kind = opts.kind or "unreal",
 		focus = opts.focus == true,
 		status = opts.status or "running",
 		line_groups = { opts.group or "UCoreOutputInfo" },
@@ -120,7 +120,7 @@ local function render_stack_tab(session, opts)
 	if not session then
 		add("State: Idle", "UCoreOutputMuted")
 		panel.replace(key, lines, {
-			title = "Debug Stack",
+			title = "Debug",
 			kind = "debug",
 			focus = opts.focus == true,
 			status = "running",
@@ -132,7 +132,7 @@ local function render_stack_tab(session, opts)
 	if state.running then
 		add("State: Running", "UCoreOutputInfo")
 		panel.replace(key, lines, {
-			title = "Debug Stack",
+			title = "Debug",
 			kind = "debug",
 			focus = opts.focus == true,
 			status = "running",
@@ -177,7 +177,7 @@ local function render_stack_tab(session, opts)
 	end
 
 	panel.replace(key, lines, {
-		title = "Debug Stack",
+		title = "Debug",
 		kind = "debug",
 		focus = opts.focus == true,
 		status = "running",
@@ -422,9 +422,6 @@ end
 
 local function auto_open_ui_enabled()
 	local ui_config = ((config.values.debug or {}).ui or {})
-	if shared_output_panel() then
-		return false
-	end
 	return ui_config.auto_open ~= false
 end
 
@@ -3537,6 +3534,8 @@ function M.setup()
 				append_debug_output(root, "Debug session initialized", {
 					focus = true,
 					group = "UCoreOutputSuccess",
+					title = "Unreal",
+					kind = "unreal",
 				})
 				render_stack_tab(dap.session(), { focus = true })
 				if root then
@@ -3551,11 +3550,6 @@ function M.setup()
 				close_hover_float()
 				local session = dap.session()
 				local debug_ui = require("udebugtool.debug.ui")
-				local reason = body and body.reason or "stopped"
-				append_debug_output(active_root(), "Debug session stopped: " .. tostring(reason), {
-					focus = true,
-					group = "UCoreOutputWarning",
-				})
 				state.stop_request_id = state.stop_request_id + 1
 				local request_id = state.stop_request_id
 				wait_for_best_stop_frame(session, 10, 100, function(frame, thread_id, score)
@@ -3572,12 +3566,6 @@ function M.setup()
 							set_session_frame(session, thread_id, frame)
 							local source_path = normalize(frame.source and frame.source.path or "")
 							local frame_label = tostring(frame.name or "<frame>")
-							if source_path ~= "" then
-								append_debug_output(active_root(), string.format("Stopped at %s:%d - %s", source_path, tonumber(frame.line or 0) or 0, frame_label), {
-									focus = false,
-									group = "UCoreOutputInfo",
-								})
-							end
 							if stop_frame_is_meaningful(frame) then
 								jump_to_frame(frame)
 							end
@@ -3591,10 +3579,6 @@ function M.setup()
 			end
 			dap.listeners.after.event_continued.udebugtool = function()
 				close_hover_float()
-				append_debug_output(active_root(), "Debug session continued", {
-					focus = false,
-					group = "UCoreOutputInfo",
-				})
 				render_stack_tab(dap.session(), { focus = false })
 				local debug_ui = require("udebugtool.debug.ui")
 				if auto_open_ui_enabled() or debug_ui.is_open() then
@@ -3609,6 +3593,8 @@ function M.setup()
 					focus = true,
 					group = "UCoreOutputWarning",
 					status = "success",
+					title = "Unreal",
+					kind = "unreal",
 				})
 				render_stack_tab(nil, { focus = true })
 				pcall(function()
@@ -3626,6 +3612,8 @@ function M.setup()
 					focus = true,
 					group = "UCoreOutputWarning",
 					status = "success",
+					title = "Unreal",
+					kind = "unreal",
 				})
 				render_stack_tab(nil, { focus = true })
 				pcall(function()
