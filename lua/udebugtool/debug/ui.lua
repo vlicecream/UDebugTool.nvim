@@ -266,6 +266,7 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "UDebugToolValue", { fg = "#DBE7FF" })
 	vim.api.nvim_set_hl(0, "UDebugToolAccent", { fg = "#86EFAC" })
 	vim.api.nvim_set_hl(0, "UDebugToolMuted", { fg = "#64748B" })
+	vim.api.nvim_set_hl(0, "UDebugToolMarker", { fg = "#FBBF24" })
 	vim.api.nvim_set_hl(0, "UDebugToolCurrent", { fg = "#38BDF8", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolCurrentStop", { fg = "#FBBF24", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolWarn", { fg = "#FBBF24", bold = true })
@@ -834,7 +835,7 @@ local function render_left(session)
 	else
 		for _, bp in ipairs(breakpoints) do
 			push_line(builder, string.format("  %s:%d", short_path(bp.path), bp.line), {
-				group = "UDebugToolValue",
+				group = "UDebugToolMarker",
 				item = {
 					kind = "breakpoint",
 					path = bp.path,

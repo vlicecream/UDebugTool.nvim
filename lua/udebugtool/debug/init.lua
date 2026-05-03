@@ -1325,11 +1325,57 @@ local function display_sign_name()
 
 	vim.fn.sign_define("UDebugToolBreakpoint", {
 		text = "B",
-		texthl = "DiagnosticSignError",
+		texthl = "UDebugToolDebugMarker",
 		linehl = "",
 		numhl = "",
 	})
 	return "UDebugToolBreakpoint"
+end
+
+local function define_or_update_sign(name, fallback)
+	local existing = vim.fn.sign_getdefined(name)
+	local current = type(existing) == "table" and existing[1] or {}
+	local spec = vim.tbl_extend("force", vim.deepcopy(fallback or {}), current or {})
+	spec.text = spec.text or (fallback and fallback.text) or ""
+	spec.texthl = "UDebugToolDebugMarker"
+	spec.linehl = spec.linehl or ""
+	spec.numhl = spec.numhl or ""
+	vim.fn.sign_define(name, spec)
+end
+
+local function setup_debug_marker_signs()
+	vim.api.nvim_set_hl(0, "UDebugToolDebugMarker", { fg = "#FBBF24", bold = true })
+
+	define_or_update_sign("UDebugToolBreakpoint", {
+		text = "B",
+		linehl = "",
+		numhl = "",
+	})
+	define_or_update_sign("DapBreakpoint", {
+		text = "B",
+		linehl = "",
+		numhl = "",
+	})
+	define_or_update_sign("DapBreakpointCondition", {
+		text = "C",
+		linehl = "",
+		numhl = "",
+	})
+	define_or_update_sign("DapBreakpointRejected", {
+		text = "R",
+		linehl = "",
+		numhl = "",
+	})
+	define_or_update_sign("DapLogPoint", {
+		text = "L",
+		linehl = "",
+		numhl = "",
+	})
+	define_or_update_sign("DapStopped", {
+		text = ">",
+		linehl = "",
+		numhl = "UDebugToolDebugMarker",
+	})
 end
 
 local function place_display_sign(path, line)
@@ -2298,6 +2344,8 @@ function M.setup()
 	if debug_config.enable == false then
 		return
 	end
+
+	setup_debug_marker_signs()
 
 	local group = vim.api.nvim_create_augroup("UDebugTool", { clear = true })
 	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "BufEnter" }, {
