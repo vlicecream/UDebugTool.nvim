@@ -34,6 +34,7 @@ local state = {
 	launch_in_progress = false,
 	loaded_roots = {},
 	redirected = {},
+	stop_request_id = 0,
 }
 
 local function normalize(path)
@@ -371,6 +372,200 @@ local function jump_to_frame(frame)
 		vim.wo[win].cursorline = true
 		pcall(vim.cmd, "normal! zvzz")
 	end
+end
+
+local function stop_frame_is_meaningful(frame)
+	if not frame then
+		return false
+	end
+
+	local source = frame.source or {}
+	local path = normalize(source.path or "")
+	local name = lower(source.name or "")
+	local line = tonumber(frame.line or 0) or 0
+
+	if path == "" then
+		return false
+	end
+	if path:find("/ntdll.dll", 1, true) or name == "ntdll.dll" then
+		return false
+	end
+	if line <= 0 then
+		return false
+	end
+
+	return true
+end
+
+local function frame_source_path(frame)
+	return normalize(frame and frame.source and frame.source.path or "")
+end
+
+local function frame_source_name(frame)
+	return lower(frame and frame.source and frame.source.name or "")
+end
+
+local function frame_score(frame, root)
+	if not frame then
+		return 0
+	end
+
+	local path = frame_source_path(frame)
+	local name = frame_source_name(frame)
+	local line = tonumber(frame.line or 0) or 0
+
+	if path == "" then
+		if line > 0 and name ~= "" then
+			return 40
+		end
+		return 0
+	end
+
+	if path:find("/ntdll.dll", 1, true) or name == "ntdll.dll" then
+		return 5
+	end
+	if path:find("/kernel32.dll", 1, true) or name == "kernel32.dll" then
+		return 5
+	end
+	if path:find("/kernelbase.dll", 1, true) or name == "kernelbase.dll" then
+		return 5
+	end
+
+	if root and project.find_project_root(path) == root and line > 0 then
+		return 400
+	end
+	if path:find("/engine/source/", 1, true) and line > 0 then
+		return 300
+	end
+	if line > 0 then
+		return 180
+	end
+	return 40
+end
+
+local function set_session_frame(session, thread_id, frame)
+	if not session or not frame then
+		return
+	end
+	if thread_id then
+		session.stopped_thread_id = thread_id
+	end
+	if session._frame_set then
+		session:_frame_set(frame)
+	else
+		session.current_frame = frame
+	end
+end
+
+local function fetch_thread_frames(session, thread_id, callback)
+	if not session or not thread_id then
+		return callback(nil, {})
+	end
+
+	local thread = session.threads and session.threads[thread_id] or nil
+	if not thread then
+		return callback(nil, {})
+	end
+	if thread.frames and #thread.frames > 0 then
+		return callback(thread, thread.frames)
+	end
+
+	session:request("stackTrace", {
+		threadId = thread_id,
+		startFrame = 0,
+		levels = 20,
+	}, function(_, response)
+		thread.frames = response and response.stackFrames or {}
+		if session.threads then
+			session.threads[thread_id] = thread
+		end
+		callback(thread, thread.frames)
+	end)
+end
+
+local function resolve_best_stop_frame(session, callback)
+	if not session then
+		return callback(nil, nil, 0)
+	end
+
+	local root = active_root()
+	session:update_threads(function()
+		local ids = {}
+		local seen = {}
+		local stopped_id = tonumber(session.stopped_thread_id or 0) or 0
+		if stopped_id > 0 then
+			table.insert(ids, stopped_id)
+			seen[stopped_id] = true
+		end
+
+		for id, _ in pairs(session.threads or {}) do
+			local value = tonumber(id or 0) or 0
+			if value > 0 and not seen[value] then
+				table.insert(ids, value)
+			end
+		end
+
+		table.sort(ids, function(a, b)
+			return a < b
+		end)
+		if #ids == 0 then
+			return callback(session.current_frame, session.stopped_thread_id, frame_score(session.current_frame, root))
+		end
+
+		local best_frame, best_thread_id, best_score = session.current_frame, session.stopped_thread_id, frame_score(session.current_frame, root)
+		local index = 1
+
+		local function consider(thread_id, frames)
+			for _, frame in ipairs(frames or {}) do
+				local score = frame_score(frame, root)
+				if score > best_score then
+					best_score = score
+					best_frame = frame
+					best_thread_id = thread_id
+				end
+				if score >= 400 then
+					return true
+				end
+			end
+			return false
+		end
+
+		local function step()
+			if index > #ids then
+				return callback(best_frame, best_thread_id, best_score)
+			end
+
+			local thread_id = ids[index]
+			index = index + 1
+			fetch_thread_frames(session, thread_id, function(_, frames)
+				if consider(thread_id, frames) then
+					return callback(best_frame, best_thread_id, best_score)
+				end
+				step()
+			end)
+		end
+
+		step()
+	end)
+end
+
+local function wait_for_best_stop_frame(session, attempts, delay_ms, callback)
+	attempts = math.max(0, tonumber(attempts) or 0)
+	delay_ms = math.max(0, tonumber(delay_ms) or 0)
+	local tries = 0
+
+	local function run()
+		resolve_best_stop_frame(session, function(frame, thread_id, score)
+			if score >= 180 or tries >= attempts then
+				return callback(frame, thread_id, score)
+			end
+
+			tries = tries + 1
+			vim.defer_fn(run, delay_ms)
+		end)
+	end
+
+	run()
 end
 
 local function hover_session()
@@ -3037,15 +3232,24 @@ function M.setup()
 			dap.listeners.after.event_stopped.udebugtool = function(_, body)
 				close_hover_float()
 				local session = dap.session()
-				if session and body and tonumber(body.threadId or 0) > 0 then
-					session.stopped_thread_id = tonumber(body.threadId)
-				end
 				local debug_ui = require("udebugtool.debug.ui")
-				debug_ui.set_stop_event(body)
-				ensure_hover_frame(session, function(frame)
+				state.stop_request_id = state.stop_request_id + 1
+				local request_id = state.stop_request_id
+				wait_for_best_stop_frame(session, 10, 100, function(frame, thread_id, score)
 					vim.schedule(function()
+						if request_id ~= state.stop_request_id then
+							return
+						end
+
+						if session and thread_id then
+							session.stopped_thread_id = thread_id
+						end
+						debug_ui.set_stop_event(body)
 						if frame then
-							jump_to_frame(frame)
+							set_session_frame(session, thread_id, frame)
+							if stop_frame_is_meaningful(frame) then
+								jump_to_frame(frame)
+							end
 						end
 						if auto_open_ui_enabled() or debug_ui.is_open() then
 							debug_ui.refresh(session)
