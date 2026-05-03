@@ -661,7 +661,9 @@ local function expression_under_cursor(win)
 		bufnr = bufnr,
 		col = col,
 		expression = expr,
-		key = string.format("%d:%d:%d:%s", bufnr, row, col, expr),
+		end_col = right - 1,
+		start_col = left - 1,
+		key = string.format("%d:%d:%d:%d:%s", bufnr, row, left - 1, right - 1, expr),
 		row = row,
 		win = win,
 	}
@@ -741,6 +743,54 @@ local function hover_current_item()
 	return state.hover.items[row]
 end
 
+local function hover_has_children(response)
+	local ref = tonumber(response and response.variablesReference or 0) or 0
+	local named = tonumber(response and response.namedVariables or 0) or 0
+	local indexed = tonumber(response and response.indexedVariables or 0) or 0
+	return ref > 0 or named > 0 or indexed > 0
+end
+
+local function hover_is_pointer_like(response)
+	local type_name = tostring(response and response.type or "")
+	local value = tostring(response and response.result or "")
+	if type_name:find("%*$") or type_name:find("%s%*$") then
+		return true
+	end
+	if value:match("^0x[%x]+$") then
+		return true
+	end
+	return false
+end
+
+local function hover_should_open(response)
+	if not hover_has_children(response) then
+		return false
+	end
+	if hover_is_pointer_like(response) then
+		return false
+	end
+	return true
+end
+
+local function hover_popup_position(anchor, width, height)
+	local win = valid_win(anchor and anchor.win) and anchor.win or 0
+	local win_width = win > 0 and vim.api.nvim_win_get_width(win) or vim.o.columns
+	local win_height = win > 0 and vim.api.nvim_win_get_height(win) or vim.o.lines
+	local start_col = tonumber(anchor and anchor.start_col or 0) or 0
+	local end_col = tonumber(anchor and anchor.end_col or start_col) or start_col
+	local row = math.max(tonumber(anchor and anchor.row or 1) or 1, 0)
+	local col = end_col + 2
+
+	if col + width > win_width then
+		col = math.max(start_col - width - 2, 0)
+	end
+	if row + height > win_height then
+		row = math.max(row - height - 1, 0)
+	end
+
+	return win, row, col
+end
+
 local function ensure_hover_buffer()
 	if state.hover.buf and vim.api.nvim_buf_is_valid(state.hover.buf) then
 		return state.hover.buf
@@ -764,7 +814,7 @@ local function ensure_hover_buffer()
 	map("q", close_hover_float, "UDebugTool close hover")
 	map("<Esc>", close_hover_float, "UDebugTool close hover")
 	map("<CR>", function()
-		M.hover_toggle_item()
+		M.hover_activate()
 	end, "UDebugTool toggle hover item")
 	map(" ", function()
 		M.hover_toggle_item()
@@ -784,13 +834,6 @@ end
 local function hover_leaf_text(entry)
 	local name = hover_display_name(entry)
 	local value = tostring(entry.value or entry.result or "")
-	local type_name = tostring(entry.type or "")
-	if value == "" then
-		return string.format("%s%s", name, type_name ~= "" and (" : " .. type_name) or "")
-	end
-	if type_name ~= "" then
-		return string.format("%s: %s  // %s", name, value, type_name)
-	end
 	return string.format("%s: %s", name, value)
 end
 
@@ -812,9 +855,8 @@ local function render_hover_variable(lines, items, session, entry, depth, is_roo
 
 	local open_token, close_token = hover_container_tokens(entry)
 	local name = hover_display_name(entry)
-	local type_name = tostring(entry.type or "")
 	local prefix = expanded and "[-]" or "[+]"
-	local header = string.format("%s%s %s%s", indent, prefix, name, type_name ~= "" and ("  // " .. type_name) or "")
+	local header = string.format("%s%s %s", indent, prefix, name)
 	if not expanded then
 		header = header .. " " .. open_token .. "..." .. close_token
 	end
@@ -889,15 +931,15 @@ local function open_or_update_hover_float(lines, anchor)
 	width = math.max(28, math.min(width + 2, 100))
 	local height = math.max(1, math.min(#lines, 18))
 
-	local source_win = valid_win(anchor and anchor.win) and anchor.win or 0
+	local source_win, row, col = hover_popup_position(anchor, width, height)
 	local config = {
 		border = "rounded",
-		col = (anchor and anchor.col or 0) + 2,
+		col = col,
 		focusable = true,
 		height = height,
 		noautocmd = true,
 		relative = "win",
-		row = math.max((anchor and anchor.row or 1) - 1, 0),
+		row = row,
 		style = "minimal",
 		title = " Debug Inspect ",
 		width = width,
@@ -957,10 +999,7 @@ local function install_hover_source_keymap(snapshot)
 
 	state.hover.source_buf = bufnr
 	vim.keymap.set("n", "<CR>", function()
-		if valid_win(state.hover.win) then
-			focus_hover_float()
-			M.hover_toggle_item()
-		end
+		M.hover_activate()
 	end, {
 		buffer = bufnr,
 		silent = true,
@@ -1059,6 +1098,9 @@ local function show_hover_for_snapshot(snapshot, opts)
 					namedVariables = tonumber(response.namedVariables or 0) or 0,
 					indexedVariables = tonumber(response.indexedVariables or 0) or 0,
 				}
+				if not hover_should_open(response) then
+					return close_hover_float()
+				end
 				local root_key = select(1, hover_item_key(root, "root"))
 				state.hover.key = snapshot.key
 				state.hover.anchor = snapshot
@@ -1116,6 +1158,20 @@ local function schedule_hover_for_cursor()
 	end, hover_debounce_ms())
 end
 
+local function update_hover_visibility()
+	if not valid_win(state.hover.win) then
+		return
+	end
+	if vim.api.nvim_get_current_win() == state.hover.win then
+		return
+	end
+
+	local current = expression_under_cursor(0)
+	if not current or current.key ~= state.hover.key then
+		close_hover_float()
+	end
+end
+
 function M.render_hover()
 	if not valid_win(state.hover.win) or not state.hover.anchor or not state.hover.root then
 		return
@@ -1123,8 +1179,13 @@ function M.render_hover()
 	render_hover_popup(state.hover.anchor)
 end
 
-function M.hover_toggle_item()
-	local item = hover_current_item()
+local function hover_toggle_item_at_row(row)
+	row = tonumber(row or 0) or 0
+	if row <= 0 then
+		return
+	end
+
+	local item = state.hover.items[row]
 	if not item or not item.key or not item.ref or item.ref <= 0 then
 		return
 	end
@@ -1144,6 +1205,34 @@ function M.hover_toggle_item()
 	end
 
 	M.render_hover()
+	if valid_win(state.hover.win) then
+		pcall(vim.api.nvim_win_set_cursor, state.hover.win, { row, 0 })
+	end
+end
+
+function M.hover_activate()
+	if not valid_win(state.hover.win) then
+		return
+	end
+
+	local row = 1
+	if vim.api.nvim_get_current_win() == state.hover.win then
+		row = vim.api.nvim_win_get_cursor(state.hover.win)[1]
+	else
+		focus_hover_float()
+		pcall(vim.api.nvim_win_set_cursor, state.hover.win, { 1, 0 })
+	end
+
+	hover_toggle_item_at_row(row)
+end
+
+function M.hover_toggle_item()
+	local item = hover_current_item()
+	if not item then
+		return
+	end
+	local row = valid_win(state.hover.win) and vim.api.nvim_win_get_cursor(state.hover.win)[1] or 0
+	hover_toggle_item_at_row(row)
 end
 
 local function is_header_file(path)
@@ -3242,6 +3331,7 @@ function M.setup()
 	vim.api.nvim_create_autocmd("CursorMoved", {
 		group = group,
 		callback = function()
+			update_hover_visibility()
 			if not hover_enabled() then
 				return
 			end
