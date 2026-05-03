@@ -54,6 +54,10 @@ local function debug_stack_key(root)
 	return "udebugtool:stack:" .. tostring(root or "session")
 end
 
+local function normalize(path)
+	return path and path:gsub("\\", "/") or nil
+end
+
 local function output_root_for_session(session)
 	local frame = session and session.current_frame or nil
 	local source_path = normalize(frame and frame.source and frame.source.path or nil)
@@ -179,10 +183,6 @@ local function render_stack_tab(session, opts)
 		status = "running",
 		line_groups = groups,
 	})
-end
-
-local function normalize(path)
-	return path and path:gsub("\\", "/") or nil
 end
 
 local function lower(text)
