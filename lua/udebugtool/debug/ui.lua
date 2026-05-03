@@ -267,6 +267,7 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "UDebugToolAccent", { fg = "#86EFAC" })
 	vim.api.nvim_set_hl(0, "UDebugToolMuted", { fg = "#64748B" })
 	vim.api.nvim_set_hl(0, "UDebugToolCurrent", { fg = "#38BDF8", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolCurrentStop", { fg = "#FBBF24", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolWarn", { fg = "#FBBF24", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolDanger", { fg = "#F87171", bold = true })
 end
@@ -794,7 +795,7 @@ local function render_left(session)
 				local prefix = stopped and "*" or "-"
 				local marker = expanded and "[-]" or "[+]"
 				push_line(builder, string.format("  %s %s Thread %s  %s", prefix, marker, tostring(thread_id), tostring(thread and thread.name or "")), {
-					group = stopped and "UDebugToolCurrent" or "UDebugToolLabel",
+					group = stopped and "UDebugToolCurrentStop" or "UDebugToolLabel",
 					item = {
 						kind = "thread",
 						thread_id = thread_id,
@@ -811,7 +812,7 @@ local function render_left(session)
 						local current = session.current_frame and session.current_frame.id == frame.id
 						local frame_marker = current and ">" or " "
 						push_line(builder, string.format("    %s %02d %s", frame_marker, index, truncate(frame.name or "<frame>", 28)), {
-							group = current and "UDebugToolCurrent" or "UDebugToolValue",
+							group = current and "UDebugToolCurrentStop" or "UDebugToolValue",
 							item = {
 								kind = "frame",
 								thread_id = thread_id,
