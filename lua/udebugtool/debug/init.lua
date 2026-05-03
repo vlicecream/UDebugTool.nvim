@@ -28,6 +28,7 @@ local state = {
 		move_seq = 0,
 		request_id = 0,
 		root = nil,
+		source_buf = nil,
 		source_win = nil,
 		win = nil,
 	},
@@ -318,12 +319,16 @@ local function close_hover_float()
 	if valid_win(state.hover.win) then
 		pcall(vim.api.nvim_win_close, state.hover.win, true)
 	end
+	if state.hover.source_buf and vim.api.nvim_buf_is_valid(state.hover.source_buf) then
+		pcall(vim.keymap.del, "n", "<CR>", { buffer = state.hover.source_buf })
+	end
 	state.hover.win = nil
 	state.hover.buf = nil
 	state.hover.items = {}
 	state.hover.key = nil
 	state.hover.root = nil
 	state.hover.anchor = nil
+	state.hover.source_buf = nil
 	state.hover.source_win = nil
 	state.hover.children_cache = {}
 	state.hover.expanded = {}
@@ -677,6 +682,15 @@ local function hover_item_key(variable, fallback)
 	return fallback or tostring(variable.name or variable.expression or "?"), ref
 end
 
+local function hover_container_tokens(variable)
+	local named = tonumber(variable and variable.namedVariables or 0) or 0
+	local indexed = tonumber(variable and variable.indexedVariables or 0) or 0
+	if indexed > 0 and named == 0 then
+		return "[", "]"
+	end
+	return "{", "}"
+end
+
 local function get_hover_children_cache(ref)
 	return state.hover.children_cache[tostring(ref)]
 end
@@ -763,40 +777,65 @@ local function ensure_hover_buffer()
 	return buf
 end
 
-local function hover_line_text(entry, depth, expanded)
-	local has_children = expanded ~= nil
-	local prefix = has_children and (expanded and "[-]" or "[+]") or "   "
-	local indent = string.rep("  ", depth)
-	local name = tostring(entry.name or entry.expression or "?")
-	local value = tostring(entry.value or entry.result or "")
-	local type_name = tostring(entry.type or "")
-	local suffix = type_name ~= "" and (" : " .. type_name) or ""
-	local text = string.format("%s%s %s%s", indent, prefix, name, suffix)
-	if value ~= "" then
-		text = text .. " = " .. value
-	end
-	return text
+local function hover_display_name(entry)
+	return tostring(entry.name or entry.expression or "?")
 end
 
-local function render_hover_variable(lines, items, session, entry, depth)
+local function hover_leaf_text(entry)
+	local name = hover_display_name(entry)
+	local value = tostring(entry.value or entry.result or "")
+	local type_name = tostring(entry.type or "")
+	if value == "" then
+		return string.format("%s%s", name, type_name ~= "" and (" : " .. type_name) or "")
+	end
+	if type_name ~= "" then
+		return string.format("%s: %s  // %s", name, value, type_name)
+	end
+	return string.format("%s: %s", name, value)
+end
+
+local function render_hover_variable(lines, items, session, entry, depth, is_root)
 	local key, ref = hover_item_key(entry)
 	local has_children = (tonumber(ref or 0) or 0) > 0
 	local expanded = has_children and state.hover.expanded[key] == true or nil
-	table.insert(lines, hover_line_text(entry, depth, expanded))
+	local indent = string.rep("  ", depth)
+
+	if not has_children then
+		table.insert(lines, indent .. hover_leaf_text(entry))
+		items[#lines] = {
+			entry = entry,
+			key = key,
+			ref = ref,
+		}
+		return
+	end
+
+	local open_token, close_token = hover_container_tokens(entry)
+	local name = hover_display_name(entry)
+	local type_name = tostring(entry.type or "")
+	local prefix = expanded and "[-]" or "[+]"
+	local header = string.format("%s%s %s%s", indent, prefix, name, type_name ~= "" and ("  // " .. type_name) or "")
+	if not expanded then
+		header = header .. " " .. open_token .. "..." .. close_token
+	end
+
+	table.insert(lines, header)
 	items[#lines] = {
 		entry = entry,
 		key = key,
 		ref = ref,
 	}
 
-	if not (has_children and expanded) then
+	if not expanded then
 		return
 	end
 
 	local cache = get_hover_children_cache(ref)
-	local indent = string.rep("  ", depth + 1)
+	local child_indent = string.rep("  ", depth + 1)
+	table.insert(lines, indent .. open_token)
 	if not cache then
-		table.insert(lines, indent .. "loading...")
+		table.insert(lines, child_indent .. "loading...")
+		table.insert(lines, indent .. close_token)
 		fetch_hover_children(session, ref, function()
 			vim.schedule(function()
 				if valid_win(state.hover.win) then
@@ -808,23 +847,26 @@ local function render_hover_variable(lines, items, session, entry, depth)
 	end
 
 	if cache.pending then
-		table.insert(lines, indent .. "loading...")
+		table.insert(lines, child_indent .. "loading...")
+		table.insert(lines, indent .. close_token)
 		return
 	end
 
 	if cache.error then
-		table.insert(lines, indent .. tostring(cache.error))
+		table.insert(lines, child_indent .. tostring(cache.error))
+		table.insert(lines, indent .. close_token)
 		return
 	end
 
 	if vim.tbl_isempty(cache.variables or {}) then
-		table.insert(lines, indent .. "(empty)")
+		table.insert(lines, indent .. close_token)
 		return
 	end
 
 	for _, child in ipairs(cache.variables or {}) do
-		render_hover_variable(lines, items, session, child, depth + 1)
+		render_hover_variable(lines, items, session, child, depth + 1, false)
 	end
+	table.insert(lines, indent .. close_token)
 end
 
 local function hover_target_row(previous_key, items)
@@ -887,7 +929,7 @@ local function render_hover_popup(anchor)
 	local previous_key = previous_item and previous_item.key or nil
 	local lines = {}
 	local items = {}
-	render_hover_variable(lines, items, session, state.hover.root, 0)
+	render_hover_variable(lines, items, session, state.hover.root, 0, true)
 	if vim.tbl_isempty(lines) then
 		lines = { tostring(state.hover.root.expression or state.hover.root.name or "?") }
 	end
@@ -899,6 +941,31 @@ local function render_hover_popup(anchor)
 		local row = math.min(hover_target_row(previous_key, items), #lines)
 		pcall(vim.api.nvim_win_set_cursor, state.hover.win, { row, 0 })
 	end
+end
+
+local function focus_hover_float()
+	if valid_win(state.hover.win) then
+		pcall(vim.api.nvim_set_current_win, state.hover.win)
+	end
+end
+
+local function install_hover_source_keymap(snapshot)
+	local bufnr = snapshot and snapshot.bufnr or nil
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return
+	end
+
+	state.hover.source_buf = bufnr
+	vim.keymap.set("n", "<CR>", function()
+		if valid_win(state.hover.win) then
+			focus_hover_float()
+			M.hover_toggle_item()
+		end
+	end, {
+		buffer = bufnr,
+		silent = true,
+		desc = "UDebugTool hover focus",
+	})
 end
 
 local function ensure_hover_frame(session, callback)
@@ -996,22 +1063,13 @@ local function show_hover_for_snapshot(snapshot, opts)
 				state.hover.key = snapshot.key
 				state.hover.anchor = snapshot
 				state.hover.root = root
+				state.hover.source_buf = snapshot.bufnr
 				state.hover.source_win = snapshot.win
 				state.hover.children_cache = {}
-				state.hover.expanded = {
-					[root_key] = true,
-				}
+				state.hover.expanded = {}
+				state.hover.expanded[root_key] = false
+				install_hover_source_keymap(snapshot)
 				render_hover_popup(snapshot)
-				local _, root_ref = hover_item_key(root, root_key)
-				if root_ref and root_ref > 0 then
-					fetch_hover_children(session, root_ref, function()
-						vim.schedule(function()
-							if valid_win(state.hover.win) and state.hover.key == snapshot.key then
-								render_hover_popup(snapshot)
-							end
-						end)
-					end)
-				end
 			end)
 		end)
 	end)
@@ -1024,7 +1082,10 @@ local function show_hover_for_cursor()
 
 	local current = expression_under_cursor(0)
 	if not current then
-		return
+		return close_hover_float()
+	end
+	if valid_win(state.hover.win) and state.hover.key ~= current.key then
+		return close_hover_float()
 	end
 	if state.hover.key == current.key and valid_win(state.hover.win) then
 		return
