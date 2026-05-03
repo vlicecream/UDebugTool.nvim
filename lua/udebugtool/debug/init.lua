@@ -488,7 +488,7 @@ local function resolve_best_stop_frame(session, callback)
 		return callback(nil, nil, 0)
 	end
 
-	local root = active_root()
+	local root = project.find_project_root_from_context()
 	session:update_threads(function()
 		local ids = {}
 		local seen = {}
