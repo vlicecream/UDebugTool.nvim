@@ -1,6 +1,6 @@
 local M = {}
 
-M.values = {
+local defaults = {
 	cache_dir = vim.fn.stdpath("cache") .. "/udebugtool",
 	engine_roots = {},
 	keymaps = {
@@ -45,8 +45,10 @@ M.values = {
 	},
 }
 
+M.values = vim.deepcopy(defaults)
+
 function M.setup(opts)
-	M.values = vim.tbl_deep_extend("force", M.values, opts or {})
+	M.values = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
 	return M.values
 end
 

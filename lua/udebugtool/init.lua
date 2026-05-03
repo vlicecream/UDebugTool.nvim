@@ -1,6 +1,7 @@
 local M = {}
 
 local initialized = false
+local registered_keymaps = {}
 
 local function register_default_keymaps()
 	local cfg = require("udebugtool.config").values
@@ -32,14 +33,33 @@ local function register_default_keymaps()
 				silent = true,
 				desc = item[3],
 			})
+			table.insert(registered_keymaps, item[1])
 		end
 	end
 end
 
+local function unregister_default_keymaps()
+	for _, lhs in ipairs(registered_keymaps) do
+		local info = vim.fn.maparg(lhs, "n", false, true)
+		if type(info) == "table" and tostring(info.desc or ""):find("^UDebugTool ") then
+			pcall(vim.keymap.del, "n", lhs)
+		end
+	end
+	registered_keymaps = {}
+end
+
+function M.reset()
+	pcall(function()
+		require("udebugtool.debug").reset()
+	end)
+	unregister_default_keymaps()
+	pcall(vim.api.nvim_del_user_command, "UDebugTool")
+	initialized = false
+end
+
 function M.setup(opts)
 	if initialized then
-		require("udebugtool.config").setup(opts)
-		return
+		M.reset()
 	end
 
 	initialized = true

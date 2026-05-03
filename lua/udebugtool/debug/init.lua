@@ -2369,4 +2369,44 @@ function M.setup()
 	end)
 end
 
+function M.reset()
+	pcall(vim.api.nvim_del_augroup_by_name, "UDebugTool")
+
+	if dap_available() then
+		local ok, dap = pcall(require, "dap")
+		if ok and dap and dap.listeners then
+			pcall(function()
+				dap.listeners.after.event_initialized.udebugtool = nil
+				dap.listeners.after.event_stopped.udebugtool = nil
+				dap.listeners.after.event_continued.udebugtool = nil
+				dap.listeners.before.event_terminated.udebugtool = nil
+				dap.listeners.before.event_exited.udebugtool = nil
+			end)
+		end
+	end
+
+	for root, _ in pairs(state.loaded_roots) do
+		pcall(save_project_breakpoints, root)
+	end
+
+	for key, entry in pairs(state.redirected) do
+		remove_actual_mark(entry)
+		unplace_display_sign(entry)
+		state.redirected[key] = nil
+	end
+
+	pcall(function()
+		require("udebugtool.debug.ui").reset()
+	end)
+
+	state.adapter_registered = false
+	state.adapter_installing = false
+	state.adapter_waiters = {}
+	state.attach_in_progress = false
+	state.attach_target_pid = nil
+	state.launch_in_progress = false
+	state.loaded_roots = {}
+	state.redirected = {}
+end
+
 return M

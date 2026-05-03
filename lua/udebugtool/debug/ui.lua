@@ -489,4 +489,8 @@ function M.activate_current_item()
 	end
 end
 
+function M.reset()
+	M.close()
+end
+
 return M
