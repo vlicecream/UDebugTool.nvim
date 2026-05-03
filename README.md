@@ -18,13 +18,15 @@ Standalone Unreal Engine debugging for Neovim.
 
 ```lua
 {
-  "mfussenegger/nvim-dap",
-  lazy = false,
-},
-{
   "vlicecream/UDebugTool.nvim",
   main = "udebugtool",
   lazy = false,
+  dependencies = {
+    {
+      "mfussenegger/nvim-dap",
+      lazy = false,
+    },
+  },
   opts = {},
 }
 ```
