@@ -50,6 +50,23 @@ local function debug_output_key(root)
 	return "udebugtool:debug:" .. tostring(root or "session")
 end
 
+local function debug_stack_key(root)
+	return "udebugtool:stack:" .. tostring(root or "session")
+end
+
+local function output_root_for_session(session)
+	local frame = session and session.current_frame or nil
+	local source_path = normalize(frame and frame.source and frame.source.path or nil)
+	if source_path and source_path ~= "" then
+		local root = project.find_project_root(source_path)
+		if root then
+			return normalize(root)
+		end
+	end
+
+	return normalize(project.find_project_root_from_context())
+end
+
 local function append_debug_output(root, message, opts)
 	local panel = shared_output_panel()
 	if not panel or not message or message == "" then
@@ -74,6 +91,93 @@ local function append_debug_output(root, message, opts)
 		focus = opts.focus == true,
 		status = opts.status or "running",
 		line_groups = { opts.group or "UCoreOutputInfo" },
+	})
+end
+
+local function render_stack_tab(session, opts)
+	local panel = shared_output_panel()
+	if not panel then
+		return
+	end
+
+	opts = opts or {}
+	local root = opts.root or output_root_for_session(session)
+	local key = debug_stack_key(root)
+	local lines = {}
+	local groups = {}
+
+	local function add(text, group)
+		lines[#lines + 1] = tostring(text or "")
+		groups[#groups + 1] = group or "UCoreOutputInfo"
+	end
+
+	add("Debug Stack", "UCoreOutputTitle")
+
+	if not session then
+		add("State: Idle", "UCoreOutputMuted")
+		panel.replace(key, lines, {
+			title = "Debug Stack",
+			kind = "debug",
+			focus = opts.focus == true,
+			status = "running",
+			line_groups = groups,
+		})
+		return
+	end
+
+	if state.running then
+		add("State: Running", "UCoreOutputInfo")
+		panel.replace(key, lines, {
+			title = "Debug Stack",
+			kind = "debug",
+			focus = opts.focus == true,
+			status = "running",
+			line_groups = groups,
+		})
+		return
+	end
+
+	local thread_id = tonumber(session.stopped_thread_id or 0) or 0
+	local thread = thread_id > 0 and session.threads and session.threads[thread_id] or nil
+	local frame = session.current_frame
+	add("State: Stopped", "UCoreOutputWarning")
+	add("Thread: " .. tostring(thread_id > 0 and thread_id or "?"), "UCoreOutputCommand")
+	if frame then
+		add("Frame: " .. tostring(frame.name or "<frame>"), "UCoreOutputInfo")
+		local source = normalize(frame.source and frame.source.path or "")
+		if source ~= "" then
+			add("Location: " .. source .. ":" .. tostring(frame.line or 0), "UCoreOutputInfo")
+		end
+	end
+	if state.stop_event and state.stop_event.reason then
+		add("Reason: " .. tostring(state.stop_event.reason), "UCoreOutputWarning")
+	end
+
+	local frames = thread and thread.frames or {}
+	if vim.tbl_isempty(frames) then
+		add("", nil)
+		add("Frames", "UCoreOutputTitle")
+		add("loading stack...", "UCoreOutputMuted")
+	else
+		add("", nil)
+		add("Frames", "UCoreOutputTitle")
+		for index, item in ipairs(frames) do
+			local marker = frame and item.id == frame.id and ">" or " "
+			local label = string.format("%s %02d %s", marker, index, tostring(item.name or "<frame>"))
+			add(label, marker == ">" and "UCoreOutputSuccess" or "UCoreOutputInfo")
+			local source = normalize(item.source and item.source.path or "")
+			if source ~= "" then
+				add("    " .. source .. ":" .. tostring(item.line or 0), "UCoreOutputMuted")
+			end
+		end
+	end
+
+	panel.replace(key, lines, {
+		title = "Debug Stack",
+		kind = "debug",
+		focus = opts.focus == true,
+		status = "running",
+		line_groups = groups,
 	})
 end
 
@@ -318,6 +422,9 @@ end
 
 local function auto_open_ui_enabled()
 	local ui_config = ((config.values.debug or {}).ui or {})
+	if shared_output_panel() then
+		return false
+	end
 	return ui_config.auto_open ~= false
 end
 
@@ -3431,6 +3538,7 @@ function M.setup()
 					focus = true,
 					group = "UCoreOutputSuccess",
 				})
+				render_stack_tab(dap.session(), { focus = true })
 				if root then
 					restore_project_breakpoints(root)
 				end
@@ -3474,6 +3582,7 @@ function M.setup()
 								jump_to_frame(frame)
 							end
 						end
+						render_stack_tab(session, { focus = true })
 						if auto_open_ui_enabled() or debug_ui.is_open() then
 							debug_ui.refresh(session)
 						end
@@ -3486,6 +3595,7 @@ function M.setup()
 					focus = false,
 					group = "UCoreOutputInfo",
 				})
+				render_stack_tab(dap.session(), { focus = false })
 				local debug_ui = require("udebugtool.debug.ui")
 				if auto_open_ui_enabled() or debug_ui.is_open() then
 					debug_ui.mark_running(dap.session())
@@ -3500,6 +3610,7 @@ function M.setup()
 					group = "UCoreOutputWarning",
 					status = "success",
 				})
+				render_stack_tab(nil, { focus = true })
 				pcall(function()
 					require("udebugtool.debug.ui").set_stop_event(nil)
 				end)
@@ -3516,6 +3627,7 @@ function M.setup()
 					group = "UCoreOutputWarning",
 					status = "success",
 				})
+				render_stack_tab(nil, { focus = true })
 				pcall(function()
 					require("udebugtool.debug.ui").set_stop_event(nil)
 				end)
