@@ -38,6 +38,45 @@ local state = {
 	stop_request_id = 0,
 }
 
+local function shared_output_panel()
+	local panel = rawget(_G, "__ucore_output_panel_api")
+	if type(panel) == "table" and type(panel.append) == "function" then
+		return panel
+	end
+	return nil
+end
+
+local function debug_output_key(root)
+	return "udebugtool:debug:" .. tostring(root or "session")
+end
+
+local function append_debug_output(root, message, opts)
+	local panel = shared_output_panel()
+	if not panel or not message or message == "" then
+		return
+	end
+
+	opts = opts or {}
+	if opts.replace then
+		panel.replace(debug_output_key(root), { tostring(message) }, {
+			title = opts.title or "UDebugTool Debug",
+			kind = "debug",
+			focus = opts.focus == true,
+			status = opts.status or "running",
+			line_groups = { opts.group or "UCoreOutputInfo" },
+		})
+		return
+	end
+
+	panel.append(debug_output_key(root), { tostring(message) }, {
+		title = opts.title or "UDebugTool Debug",
+		kind = "debug",
+		focus = opts.focus == true,
+		status = opts.status or "running",
+		line_groups = { opts.group or "UCoreOutputInfo" },
+	})
+end
+
 local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
 end
@@ -2880,6 +2919,10 @@ local function attach_with_process(process, ctx)
 			"UDebugTool: attaching to " .. tostring(process.name or "UnrealEditor.exe") .. " (" .. tostring(pid) .. ")",
 			vim.log.levels.INFO
 		)
+		append_debug_output(cwd, "Attaching to " .. tostring(process.name or "UnrealEditor.exe") .. " (" .. tostring(pid) .. ")", {
+			focus = true,
+			group = "UCoreOutputCommand",
+		})
 		dap.run({
 			type = "cppvsdbg",
 			request = "attach",
@@ -2979,6 +3022,10 @@ function M.launch_editor()
 					"UDebugTool: launched Unreal Editor (" .. tostring(launch_pid) .. "), waiting to attach",
 					vim.log.levels.INFO
 				)
+				append_debug_output(launch_ctx.root, "Launched Unreal Editor (" .. tostring(launch_pid) .. "), waiting to attach", {
+					focus = true,
+					group = "UCoreOutputCommand",
+				})
 				wait_for_editor_attach_target(launch_ctx, launch_pid, function(process, wait_err)
 					state.launch_in_progress = false
 					if not process then
@@ -2990,10 +3037,18 @@ function M.launch_editor()
 		end
 
 		if (config.values.debug or {}).build_before_launch == false then
+			append_debug_output(ctx.root, "Launching Unreal Editor without pre-build", {
+				focus = true,
+				group = "UCoreOutputInfo",
+			})
 			return do_launch(ctx)
 		end
 
 		vim.notify("UDebugTool: building Unreal Editor target before launch", vim.log.levels.INFO)
+		append_debug_output(ctx.root, "Building Unreal Editor target before launch", {
+			focus = true,
+			group = "UCoreOutputCommand",
+		})
 		unreal.build_async("", function(ok, result, build_ctx)
 			if not ok then
 				state.launch_in_progress = false
@@ -3372,6 +3427,10 @@ function M.setup()
 				state.attach_target_pid = nil
 				close_hover_float()
 				local root = active_root()
+				append_debug_output(root, "Debug session initialized", {
+					focus = true,
+					group = "UCoreOutputSuccess",
+				})
 				if root then
 					restore_project_breakpoints(root)
 				end
@@ -3384,6 +3443,11 @@ function M.setup()
 				close_hover_float()
 				local session = dap.session()
 				local debug_ui = require("udebugtool.debug.ui")
+				local reason = body and body.reason or "stopped"
+				append_debug_output(active_root(), "Debug session stopped: " .. tostring(reason), {
+					focus = true,
+					group = "UCoreOutputWarning",
+				})
 				state.stop_request_id = state.stop_request_id + 1
 				local request_id = state.stop_request_id
 				wait_for_best_stop_frame(session, 10, 100, function(frame, thread_id, score)
@@ -3398,6 +3462,14 @@ function M.setup()
 						debug_ui.set_stop_event(body)
 						if frame then
 							set_session_frame(session, thread_id, frame)
+							local source_path = normalize(frame.source and frame.source.path or "")
+							local frame_label = tostring(frame.name or "<frame>")
+							if source_path ~= "" then
+								append_debug_output(active_root(), string.format("Stopped at %s:%d - %s", source_path, tonumber(frame.line or 0) or 0, frame_label), {
+									focus = false,
+									group = "UCoreOutputInfo",
+								})
+							end
 							if stop_frame_is_meaningful(frame) then
 								jump_to_frame(frame)
 							end
@@ -3410,6 +3482,10 @@ function M.setup()
 			end
 			dap.listeners.after.event_continued.udebugtool = function()
 				close_hover_float()
+				append_debug_output(active_root(), "Debug session continued", {
+					focus = false,
+					group = "UCoreOutputInfo",
+				})
 				local debug_ui = require("udebugtool.debug.ui")
 				if auto_open_ui_enabled() or debug_ui.is_open() then
 					debug_ui.mark_running(dap.session())
@@ -3419,6 +3495,11 @@ function M.setup()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
 				close_hover_float()
+				append_debug_output(active_root(), "Debug session terminated", {
+					focus = true,
+					group = "UCoreOutputWarning",
+					status = "success",
+				})
 				pcall(function()
 					require("udebugtool.debug.ui").set_stop_event(nil)
 				end)
@@ -3430,6 +3511,11 @@ function M.setup()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
 				close_hover_float()
+				append_debug_output(active_root(), "Debug session exited", {
+					focus = true,
+					group = "UCoreOutputWarning",
+					status = "success",
+				})
 				pcall(function()
 					require("udebugtool.debug.ui").set_stop_event(nil)
 				end)

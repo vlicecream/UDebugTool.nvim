@@ -13,6 +13,7 @@ Standalone Unreal Engine debugging for Neovim.
 - breakpoint persistence per project
 - header declaration breakpoint redirection to `.cpp`
 - a built-in multi-pane debug workspace
+- optional shared bottom output tabs when `UCore.nvim` is present
 
 ## Install
 
@@ -125,3 +126,4 @@ require("udebugtool").setup({
 - Breakpoints are stored under `stdpath("cache")/udebugtool/projects/<project-hash>/breakpoints.json`.
 - Watch expressions are stored per project under `stdpath("cache")/udebugtool/projects/<project-hash>/watches.json`.
 - `continue` attaches to an existing Unreal process when possible, otherwise it launches Unreal Editor for the current project.
+- when `UCore.nvim` is loaded, adapter install progress, build output, launch flow, and debug session state changes are mirrored into the shared bottom output workspace

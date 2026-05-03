@@ -3,6 +3,18 @@ local M = {}
 local state = {}
 local progress_ids = {}
 
+local function shared_output_panel()
+	local panel = rawget(_G, "__ucore_output_panel_api")
+	if type(panel) == "table" and type(panel.replace) == "function" then
+		return panel
+	end
+	return nil
+end
+
+local function progress_key(title)
+	return "udebugtool:progress:" .. tostring(title or "progress")
+end
+
 local function uses_builtin_notify()
 	local info = debug.getinfo(vim.notify, "S")
 	local source = tostring(info and info.source or "")
@@ -31,7 +43,19 @@ local function echo(message, hl)
 end
 
 function M.progress(title, message)
+	local panel = shared_output_panel()
+	local first = state[title] == nil
 	state[title] = message
+	if panel then
+		panel.replace(progress_key(title), { tostring(message) }, {
+			title = title,
+			kind = "debug",
+			focus = first,
+			status = "running",
+			line_groups = { "UCoreOutputInfo" },
+		})
+		return
+	end
 	if uses_builtin_notify() then
 		local ok, id = pcall(vim.api.nvim_echo, {
 			{ tostring(message), "Normal" },
@@ -52,7 +76,19 @@ function M.progress(title, message)
 end
 
 function M.progress_finish(title, message)
+	local panel = shared_output_panel()
 	state[title] = nil
+	if panel then
+		panel.replace(progress_key(title), { tostring(message) }, {
+			title = title,
+			kind = "debug",
+			focus = false,
+			status = "success",
+			line_groups = { "UCoreOutputSuccess" },
+		})
+		panel.finish(progress_key(title), nil, { open = true, focus = false })
+		return
+	end
 	if uses_builtin_notify() then
 		local ok, id = pcall(vim.api.nvim_echo, {
 			{ tostring(message), "Normal" },
@@ -75,7 +111,19 @@ function M.progress_finish(title, message)
 end
 
 function M.progress_fail(title, message)
+	local panel = shared_output_panel()
 	state[title] = nil
+	if panel then
+		panel.replace(progress_key(title), { tostring(message) }, {
+			title = title,
+			kind = "debug",
+			focus = true,
+			status = "failed",
+			line_groups = { "UCoreOutputError" },
+		})
+		panel.fail(progress_key(title), nil, { open = true, focus = true })
+		return
+	end
 	if uses_builtin_notify() then
 		local ok, id = pcall(vim.api.nvim_echo, {
 			{ tostring(message), "Normal" },
