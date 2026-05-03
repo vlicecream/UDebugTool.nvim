@@ -42,47 +42,32 @@ Optional but recommended:
 ```vim
 :UDebugTool
 :UDebugTool attach
-:UDebugTool breakpoint
-:UDebugTool condition
-:UDebugTool logpoint
-:UDebugTool clear
 :UDebugTool editor
+:UDebugTool breakpoint
 :UDebugTool continue
 :UDebugTool stop
-:UDebugTool restart
-:UDebugTool breakpoints
-:UDebugTool processes
-:UDebugTool ui
-:UDebugTool hover
 :UDebugTool step-over
 :UDebugTool step-into
 :UDebugTool step-out
-:UDebugTool prewarm
-:UDebugTool status
 :checkhealth udebugtool
 ```
 
 ## Default Keymaps
 
 ```text
+ga          attach
+ge          build + launch Unreal Editor under debugger
 <leader>db  toggle breakpoint
 <leader>dc  continue / attach / launch
-<leader>da  attach
-<leader>de  build + launch Unreal Editor under debugger
-<leader>dr  restart
 <leader>ds  stop
 <leader>do  step over
 <leader>di  step into
 <leader>du  step out
-<leader>dh  hover
-<leader>dp  pick process
-<leader>dl  list breakpoints
-<leader>dt  toggle debug workspace
 ```
 
 ## Debug Workspace
 
-`:UDebugTool ui` opens a three-pane debug workspace:
+The built-in debug workspace opens automatically when a session stops:
 
 - left: session state, threads, call stack, breakpoints, watches
 - right: current stop, scope variables, expandable watch values
@@ -139,5 +124,4 @@ require("udebugtool").setup({
 - Windows is the primary target.
 - Breakpoints are stored under `stdpath("cache")/udebugtool/projects/<project-hash>/breakpoints.json`.
 - Watch expressions are stored per project under `stdpath("cache")/udebugtool/projects/<project-hash>/watches.json`.
-- `editor` builds the current Unreal Editor target first, then launches and attaches.
-- `prewarm` is best-effort. It prepares signer / adapter prerequisites before the first debug session.
+- `continue` attaches to an existing Unreal process when possible, otherwise it launches Unreal Editor for the current project.

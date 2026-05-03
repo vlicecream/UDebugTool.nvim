@@ -12,19 +12,14 @@ local function register_default_keymaps()
 
 	local debug = require("udebugtool.debug")
 	local mappings = {
-		{ keymaps.breakpoint, debug.toggle_breakpoint, "UDebugTool breakpoint" },
-		{ keymaps.continue, debug.continue, "UDebugTool continue" },
 		{ keymaps.attach, debug.attach, "UDebugTool attach" },
 		{ keymaps.editor, debug.launch_editor, "UDebugTool debug editor" },
-		{ keymaps.restart, debug.restart, "UDebugTool restart" },
+		{ keymaps.breakpoint, debug.toggle_breakpoint, "UDebugTool breakpoint" },
+		{ keymaps.continue, debug.continue, "UDebugTool continue" },
 		{ keymaps.stop, debug.stop, "UDebugTool stop" },
 		{ keymaps.step_over, debug.step_over, "UDebugTool step over" },
 		{ keymaps.step_into, debug.step_into, "UDebugTool step into" },
 		{ keymaps.step_out, debug.step_out, "UDebugTool step out" },
-		{ keymaps.hover, debug.hover, "UDebugTool hover" },
-		{ keymaps.processes, debug.pick_process, "UDebugTool processes" },
-		{ keymaps.breakpoints, debug.list_breakpoints, "UDebugTool breakpoints" },
-		{ keymaps.ui, debug.toggle_ui, "UDebugTool UI" },
 	}
 
 	for _, item in ipairs(mappings) do

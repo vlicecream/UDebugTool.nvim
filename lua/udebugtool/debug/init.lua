@@ -2243,17 +2243,12 @@ function M.dispatch(tail)
 	sub = sub and sub:lower() or ""
 
 	local handlers = {
-		attach = M.attach,
 		breakpoint = M.toggle_breakpoint,
-		editor = M.launch_editor,
 		["continue"] = M.continue,
-		condition = M.conditional_breakpoint,
-		clear = M.clear_breakpoints,
-		logpoint = M.logpoint,
 		stop = M.stop,
-		breakpoints = M.list_breakpoints,
-		processes = M.pick_process,
-		ui = M.toggle_ui,
+		["step-over"] = M.step_over,
+		["step-into"] = M.step_into,
+		["step-out"] = M.step_out,
 	}
 
 	local handler = handlers[sub]
@@ -2263,17 +2258,12 @@ function M.dispatch(tail)
 
 	print([[
 UDebugTool debug subcommands:
-  :UDebugTool attach        Attach to the current Unreal process
   :UDebugTool breakpoint    Toggle a breakpoint at the cursor
-  :UDebugTool editor        Launch Unreal Editor under debugger
   :UDebugTool continue      Continue the active session, or attach if none
-  :UDebugTool condition     Set a conditional breakpoint at the cursor
-  :UDebugTool logpoint      Set a logpoint at the cursor
-  :UDebugTool clear         Clear all current breakpoints
   :UDebugTool stop          Stop the active debug session
-  :UDebugTool breakpoints   List current breakpoints
-  :UDebugTool processes     Pick a process to attach
-  :UDebugTool ui            Toggle the built-in debug workspace
+  :UDebugTool step-over     Step over
+  :UDebugTool step-into     Step into
+  :UDebugTool step-out      Step out
 ]])
 end
 
