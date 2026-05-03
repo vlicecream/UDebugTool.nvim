@@ -148,22 +148,7 @@ local function apply_buffer_keymaps(slot_name, buf)
 		M.refresh(current_session())
 	end, "UDebugTool refresh ui")
 	map("a", M.prompt_watch, "UDebugTool add watch")
-	map("d", M.delete_selected_watch, "UDebugTool delete watch")
-	map("c", function()
-		require("udebugtool.debug").continue()
-	end, "UDebugTool continue")
-	map("o", function()
-		require("udebugtool.debug").step_over()
-	end, "UDebugTool step over")
-	map("i", function()
-		require("udebugtool.debug").step_into()
-	end, "UDebugTool step into")
-	map("u", function()
-		require("udebugtool.debug").step_out()
-	end, "UDebugTool step out")
-	map("s", function()
-		require("udebugtool.debug").stop()
-	end, "UDebugTool stop")
+	map("x", M.delete_selected_watch, "UDebugTool delete watch")
 end
 
 local function open_left()
@@ -1059,10 +1044,13 @@ local function render_bottom(session)
 		})
 	end
 	push_line(builder, "")
-	push_line(builder, "[c] Continue   [o] Step Over   [i] Step Into   [u] Step Out   [s] Stop", {
+	push_line(builder, "[SPC da] Attach   [SPC de] Editor   [SPC db] Breakpoint   [SPC dc] Continue", {
 		group = "UDebugToolValue",
 	})
-	push_line(builder, "[CR] Jump / Expand   [a] Add Watch   [d] Delete Watch   [r] Refresh   [q] Close", {
+	push_line(builder, "[SPC ds] Stop   [SPC do] Step Over   [SPC di] Step Into   [SPC du] Step Out", {
+		group = "UDebugToolValue",
+	})
+	push_line(builder, "[CR] Jump / Expand   [a] Add Watch   [x] Delete Watch   [r] Refresh   [q] Close", {
 		group = "UDebugToolValue",
 	})
 	if state.selected_watch and state.selected_watch ~= "" then

@@ -9,6 +9,8 @@ local ADAPTER_PROGRESS_TITLE = "UDebugTool Debug Adapter Init"
 
 local redirect_group = "udebugtool_debug_redirect"
 local track_ns = vim.api.nvim_create_namespace("udebugtool_debug_track")
+local buffer_allows_hover
+local ensure_buffer
 
 local state = {
 	adapter_registered = false,
@@ -326,6 +328,51 @@ local function close_hover_float()
 	state.hover.expanded = {}
 end
 
+local function normal_source_window(win)
+	if not valid_win(win) then
+		return false
+	end
+	return buffer_allows_hover(vim.api.nvim_win_get_buf(win))
+end
+
+local function find_source_window()
+	local current = vim.api.nvim_get_current_win()
+	if normal_source_window(current) then
+		return current
+	end
+
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		if normal_source_window(win) then
+			return win
+		end
+	end
+
+	return current
+end
+
+local function jump_to_frame(frame)
+	local path = normalize(frame and frame.source and frame.source.path or nil)
+	local line = tonumber(frame and frame.line or 1) or 1
+	local col = math.max((tonumber(frame and frame.column or 1) or 1) - 1, 0)
+	if not path or path == "" then
+		return
+	end
+
+	local bufnr = ensure_buffer(path)
+	if not bufnr then
+		return
+	end
+
+	local win = find_source_window()
+	if valid_win(win) then
+		pcall(vim.api.nvim_set_current_win, win)
+		pcall(vim.api.nvim_win_set_buf, win, bufnr)
+		pcall(vim.api.nvim_win_set_cursor, win, { line, col })
+		vim.wo[win].cursorline = true
+		pcall(vim.cmd, "normal! zvzz")
+	end
+end
+
 local function hover_session()
 	if not dap_available() then
 		return nil
@@ -337,7 +384,7 @@ local function hover_session()
 	return dap.session()
 end
 
-local function buffer_allows_hover(bufnr)
+buffer_allows_hover = function(bufnr)
 	if not bufnr or bufnr == 0 or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
@@ -901,7 +948,7 @@ local function find_buffer_for_path(path)
 	return nil
 end
 
-local function ensure_buffer(path)
+ensure_buffer = function(path)
 	path = normalize(path)
 	if not path or path == "" then
 		return nil
@@ -1897,8 +1944,8 @@ local function display_sign_name()
 	end
 
 	vim.fn.sign_define("UDebugToolBreakpoint", {
-		text = "B",
-		texthl = "UDebugToolDebugMarker",
+		text = "●",
+		texthl = "UDebugToolBreakpointMarker",
 		linehl = "",
 		numhl = "",
 	})
@@ -1910,44 +1957,52 @@ local function define_or_update_sign(name, fallback)
 	local current = type(existing) == "table" and existing[1] or {}
 	local spec = vim.tbl_extend("force", vim.deepcopy(fallback or {}), current or {})
 	spec.text = spec.text or (fallback and fallback.text) or ""
-	spec.texthl = "UDebugToolDebugMarker"
+	spec.texthl = spec.texthl or ""
 	spec.linehl = spec.linehl or ""
 	spec.numhl = spec.numhl or ""
 	vim.fn.sign_define(name, spec)
 end
 
 local function setup_debug_marker_signs()
-	vim.api.nvim_set_hl(0, "UDebugToolDebugMarker", { fg = "#FBBF24", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolBreakpointMarker", { fg = "#F44747", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolStoppedMarker", { fg = "#FBBF24", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolStoppedLine", { bg = "#3A2C00" })
 
 	define_or_update_sign("UDebugToolBreakpoint", {
-		text = "B",
+		text = "●",
+		texthl = "UDebugToolBreakpointMarker",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpoint", {
-		text = "B",
+		text = "●",
+		texthl = "UDebugToolBreakpointMarker",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpointCondition", {
-		text = "C",
+		text = "●",
+		texthl = "UDebugToolBreakpointMarker",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpointRejected", {
-		text = "R",
+		text = "○",
+		texthl = "UDebugToolBreakpointMarker",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapLogPoint", {
-		text = "L",
+		text = "◆",
+		texthl = "UDebugToolBreakpointMarker",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapStopped", {
 		text = ">",
-		linehl = "",
-		numhl = "UDebugToolDebugMarker",
+		texthl = "UDebugToolStoppedMarker",
+		linehl = "UDebugToolStoppedLine",
+		numhl = "UDebugToolStoppedMarker",
 	})
 end
 
@@ -2981,11 +3036,22 @@ function M.setup()
 			end
 			dap.listeners.after.event_stopped.udebugtool = function(_, body)
 				close_hover_float()
+				local session = dap.session()
+				if session and body and tonumber(body.threadId or 0) > 0 then
+					session.stopped_thread_id = tonumber(body.threadId)
+				end
 				local debug_ui = require("udebugtool.debug.ui")
 				debug_ui.set_stop_event(body)
-				if auto_open_ui_enabled() or debug_ui.is_open() then
-					debug_ui.refresh(dap.session())
-				end
+				ensure_hover_frame(session, function(frame)
+					vim.schedule(function()
+						if frame then
+							jump_to_frame(frame)
+						end
+						if auto_open_ui_enabled() or debug_ui.is_open() then
+							debug_ui.refresh(session)
+						end
+					end)
+				end)
 			end
 			dap.listeners.after.event_continued.udebugtool = function()
 				close_hover_float()
