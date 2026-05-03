@@ -89,7 +89,7 @@ UDebugTool commands:
   :UDebugTool restart      Restart the active debug session
   :UDebugTool breakpoints  List current breakpoints
   :UDebugTool processes    Pick a process to attach
-  :UDebugTool ui           Toggle the minimal debug UI
+  :UDebugTool ui           Toggle the built-in debug workspace
   :UDebugTool hover        Show debug hover
   :UDebugTool step-over    Step over
   :UDebugTool step-into    Step into

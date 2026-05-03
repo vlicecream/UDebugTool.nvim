@@ -1016,7 +1016,9 @@ local function queue_adapter_waiter(callback)
 	end
 end
 
-local function ensure_dap_adapter_async(callback)
+local function ensure_dap_adapter_async(callback, opts)
+	opts = opts or {}
+	local silent = opts.silent == true
 	local ok, payload = ensure_dap_adapter()
 	if ok then
 		if callback then
@@ -1172,7 +1174,9 @@ local function ensure_dap_adapter_async(callback)
 		local ready, result = ensure_dap_adapter()
 		if ready then
 			adapter_progress_finish("Ready")
-			vim.notify("UDebugTool: cppvsdbg adapter is ready", vim.log.levels.INFO)
+			if not silent then
+				vim.notify("UDebugTool: cppvsdbg adapter is ready", vim.log.levels.INFO)
+			end
 			finish_adapter_waiters(true, result)
 		else
 			fail("UDebugTool: debug prerequisites installation finished but adapter is still unavailable")
@@ -1218,7 +1222,9 @@ local function ensure_dap_adapter_async(callback)
 			return fail("UDebugTool: Mason is not available to install cppvsdbg")
 		end
 
-		vim.notify("UDebugTool: installing cppvsdbg adapter via Mason (" .. package_name .. ")", vim.log.levels.INFO)
+		if not silent then
+			vim.notify("UDebugTool: installing cppvsdbg adapter via Mason (" .. package_name .. ")", vim.log.levels.INFO)
+		end
 		report_progress(45, "Preparing Adapter")
 		registry.refresh(vim.schedule_wrap(function(success)
 			if not success then
@@ -1239,7 +1245,9 @@ local function ensure_dap_adapter_async(callback)
 		local ready, result = ensure_dap_adapter()
 		if ready then
 			adapter_progress_finish("Ready")
-			vim.notify("UDebugTool: cppvsdbg adapter is ready", vim.log.levels.INFO)
+			if not silent then
+				vim.notify("UDebugTool: cppvsdbg adapter is ready", vim.log.levels.INFO)
+			end
 			return finish_adapter_waiters(true, result)
 		end
 
@@ -1256,7 +1264,9 @@ local function ensure_dap_adapter_async(callback)
 		return continue_after_signer()
 	end
 
-	vim.notify("UDebugTool: provisioning cppvsdbg handshake signer from official VS Code archive", vim.log.levels.INFO)
+	if not silent then
+		vim.notify("UDebugTool: provisioning cppvsdbg handshake signer from official VS Code archive", vim.log.levels.INFO)
+	end
 	report_progress(15, "Downloading Signer")
 	install_signer_async(function(installed, result)
 		if not installed then
@@ -2263,7 +2273,7 @@ UDebugTool debug subcommands:
   :UDebugTool stop          Stop the active debug session
   :UDebugTool breakpoints   List current breakpoints
   :UDebugTool processes     Pick a process to attach
-  :UDebugTool ui            Toggle the minimal debug UI
+  :UDebugTool ui            Toggle the built-in debug workspace
 ]])
 end
 
@@ -2290,7 +2300,7 @@ function M.prewarm()
 
 	ensure_dap_adapter_async(function()
 		-- Best-effort background prewarm.
-	end)
+	end, { silent = true })
 end
 
 function M.setup()
@@ -2335,8 +2345,9 @@ function M.setup()
 					debug_ui.refresh(dap.session())
 				end
 			end
-			dap.listeners.after.event_stopped.udebugtool = function()
+			dap.listeners.after.event_stopped.udebugtool = function(_, body)
 				local debug_ui = require("udebugtool.debug.ui")
+				debug_ui.set_stop_event(body)
 				if auto_open_ui_enabled() or debug_ui.is_open() then
 					debug_ui.refresh(dap.session())
 				end
@@ -2350,6 +2361,9 @@ function M.setup()
 			dap.listeners.before.event_terminated.udebugtool = function()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
+				pcall(function()
+					require("udebugtool.debug.ui").set_stop_event(nil)
+				end)
 				if auto_close_ui_enabled() then
 					require("udebugtool.debug.ui").close()
 				end
@@ -2357,6 +2371,9 @@ function M.setup()
 			dap.listeners.before.event_exited.udebugtool = function()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
+				pcall(function()
+					require("udebugtool.debug.ui").set_stop_event(nil)
+				end)
 				if auto_close_ui_enabled() then
 					require("udebugtool.debug.ui").close()
 				end

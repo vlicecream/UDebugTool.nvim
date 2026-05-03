@@ -12,7 +12,7 @@ Standalone Unreal Engine debugging for Neovim.
 - build + launch Unreal Editor under debugger
 - breakpoint persistence per project
 - header declaration breakpoint redirection to `.cpp`
-- a minimal built-in stack / locals UI
+- a built-in multi-pane debug workspace
 
 ## Install
 
@@ -77,7 +77,30 @@ Optional but recommended:
 <leader>dh  hover
 <leader>dp  pick process
 <leader>dl  list breakpoints
-<leader>dt  toggle debug UI
+<leader>dt  toggle debug workspace
+```
+
+## Debug Workspace
+
+`:UDebugTool ui` opens a three-pane debug workspace:
+
+- left: session state, threads, call stack, breakpoints, watches
+- right: current stop, scope variables, expandable watch values
+- bottom: controls and current session summary
+
+Inside any debug UI pane:
+
+```text
+<CR>  jump to frame / breakpoint, or expand variables
+a     add watch expression
+d     delete selected watch
+r     refresh panes
+c     continue
+o     step over
+i     step into
+u     step out
+s     stop
+q     close the debug workspace
 ```
 
 ## Defaults
@@ -102,6 +125,10 @@ require("udebugtool").setup({
     ui = {
       auto_open = true,
       auto_close = true,
+      sidebar_width = 38,
+      inspect_width = 52,
+      tray_height = 9,
+      persist_watches = true,
     },
   },
 })
@@ -111,5 +138,6 @@ require("udebugtool").setup({
 
 - Windows is the primary target.
 - Breakpoints are stored under `stdpath("cache")/udebugtool/projects/<project-hash>/breakpoints.json`.
+- Watch expressions are stored per project under `stdpath("cache")/udebugtool/projects/<project-hash>/watches.json`.
 - `editor` builds the current Unreal Editor target first, then launches and attaches.
 - `prewarm` is best-effort. It prepares signer / adapter prerequisites before the first debug session.

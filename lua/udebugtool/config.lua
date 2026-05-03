@@ -41,6 +41,10 @@ local defaults = {
 		ui = {
 			auto_open = true,
 			auto_close = true,
+			sidebar_width = 38,
+			inspect_width = 52,
+			tray_height = 9,
+			persist_watches = true,
 		},
 	},
 }
