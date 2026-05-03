@@ -25,6 +25,11 @@ local defaults = {
 		autosave_before_launch = true,
 		build_before_launch = true,
 		redirect_header_breakpoints = true,
+		hover = {
+			auto = true,
+			debounce_ms = 120,
+			max_children = 8,
+		},
 		adapter = {
 			auto_install = true,
 			package = "cpptools",
