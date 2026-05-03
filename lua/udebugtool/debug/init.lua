@@ -6,6 +6,8 @@ local unreal = require("udebugtool.unreal")
 
 local M = {}
 local ADAPTER_PROGRESS_TITLE = "UDebugTool Debug Adapter Init"
+local render_stack_tab
+local jump_to_frame
 
 local redirect_group = "udebugtool_debug_redirect"
 local track_ns = vim.api.nvim_create_namespace("udebugtool_debug_track")
@@ -36,6 +38,13 @@ local state = {
 	loaded_roots = {},
 	redirected = {},
 	stop_request_id = 0,
+	unreal_log = {
+		offset = 0,
+		partial = "",
+		path = nil,
+		root = nil,
+		timer = nil,
+	},
 }
 
 local function shared_output_panel()
@@ -98,7 +107,208 @@ local function append_debug_output(root, message, opts)
 	})
 end
 
-local function render_stack_tab(session, opts)
+local function open_unreal_output(root, lines, opts)
+	local panel = shared_output_panel()
+	if not panel then
+		return nil
+	end
+
+	opts = opts or {}
+	local key = panel.open_tab({
+		key = debug_output_key(root),
+		title = opts.title or "Unreal",
+		kind = opts.kind or "unreal",
+		focus = opts.focus ~= false,
+	})
+
+	if lines and not vim.tbl_isempty(lines) then
+		panel.replace(key, lines, {
+			title = opts.title or "Unreal",
+			kind = opts.kind or "unreal",
+			focus = opts.focus ~= false,
+			status = opts.status or "running",
+			line_groups = opts.line_groups,
+		})
+	end
+
+	return key
+end
+
+local function ensure_debug_output(root, session)
+	local panel = shared_output_panel()
+	if not panel then
+		return
+	end
+
+	render_stack_tab(session, {
+		root = root,
+		focus = false,
+	})
+end
+
+local function focus_unreal_output(root)
+	local panel = shared_output_panel()
+	if not panel then
+		return
+	end
+	panel.select(debug_output_key(root))
+end
+
+local function stop_unreal_log_tail()
+	local tail = state.unreal_log
+	if tail.timer then
+		tail.timer:stop()
+		tail.timer:close()
+		tail.timer = nil
+	end
+	tail.offset = 0
+	tail.partial = ""
+	tail.path = nil
+	tail.root = nil
+end
+
+local function unreal_log_path(ctx)
+	if not ctx or not ctx.root or not ctx.project_name then
+		return nil
+	end
+	return normalize(ctx.root .. "/Saved/Logs/" .. ctx.project_name .. ".log")
+end
+
+local function unreal_log_group(text)
+	local lower_text = tostring(text or ""):lower()
+	if lower_text:find("fatal error", 1, true)
+		or lower_text:find(" error:", 1, true)
+		or lower_text:find("ensure condition failed", 1, true)
+		or lower_text:find("assertion failed", 1, true)
+	then
+		return "UCoreOutputError"
+	end
+	if lower_text:find(" warning:", 1, true) or lower_text:find(": warning ", 1, true) then
+		return "UCoreOutputWarning"
+	end
+	if lower_text:find("display:", 1, true) or lower_text:find("loginit:", 1, true) then
+		return "UCoreOutputInfo"
+	end
+	return nil
+end
+
+local function append_unreal_log_chunk(root, text)
+	local panel = shared_output_panel()
+	if not panel or not root or not text or text == "" then
+		return
+	end
+
+	local tail = state.unreal_log
+	text = tostring(text):gsub("\r\n", "\n"):gsub("\r", "\n")
+	text = (tail.partial or "") .. text
+
+	local ends_with_newline = text:sub(-1) == "\n"
+	local lines = vim.split(text, "\n", { plain = true })
+	if ends_with_newline then
+		tail.partial = ""
+		if lines[#lines] == "" then
+			table.remove(lines, #lines)
+		end
+	else
+		tail.partial = table.remove(lines, #lines) or ""
+	end
+
+	if vim.tbl_isempty(lines) then
+		return
+	end
+
+	local groups = {}
+	for index, line in ipairs(lines) do
+		groups[index] = unreal_log_group(line)
+	end
+
+	panel.append(debug_output_key(root), lines, {
+		title = "Unreal",
+		kind = "unreal",
+		focus = false,
+		status = "running",
+		line_groups = groups,
+	})
+end
+
+local function read_log_delta(path, offset)
+	local fd = vim.loop.fs_open(path, "r", 438)
+	if not fd then
+		return nil
+	end
+
+	local stat = vim.loop.fs_fstat(fd)
+	if not stat then
+		vim.loop.fs_close(fd)
+		return nil
+	end
+
+	local size = tonumber(stat.size or 0) or 0
+	if size <= offset then
+		vim.loop.fs_close(fd)
+		return ""
+	end
+
+	local chunk = vim.loop.fs_read(fd, size - offset, offset)
+	vim.loop.fs_close(fd)
+	return chunk
+end
+
+local function start_unreal_log_tail(ctx, opts)
+	if not ctx then
+		return
+	end
+
+	local path = unreal_log_path(ctx)
+	if not path then
+		return
+	end
+
+	opts = opts or {}
+	local stat = vim.loop.fs_stat(path)
+	local initial_offset = tonumber(opts.initial_offset)
+	if initial_offset == nil then
+		initial_offset = stat and tonumber(stat.size or 0) or 0
+	end
+
+	stop_unreal_log_tail()
+
+	local tail = state.unreal_log
+	tail.offset = math.max(0, initial_offset or 0)
+	tail.partial = ""
+	tail.path = path
+	tail.root = normalize(ctx.root)
+	tail.timer = vim.loop.new_timer()
+
+	tail.timer:start(0, 500, vim.schedule_wrap(function()
+		local current = state.unreal_log
+		if current.path ~= path or current.root ~= normalize(ctx.root) then
+			return
+		end
+
+		local current_stat = vim.loop.fs_stat(path)
+		if not current_stat or current_stat.type ~= "file" then
+			return
+		end
+
+		local size = tonumber(current_stat.size or 0) or 0
+		if size < current.offset then
+			current.offset = 0
+			current.partial = ""
+		end
+		if size == current.offset then
+			return
+		end
+
+		local chunk = read_log_delta(path, current.offset)
+		current.offset = size
+		if chunk and chunk ~= "" then
+			append_unreal_log_chunk(current.root, chunk)
+		end
+	end))
+end
+
+render_stack_tab = function(session, opts)
 	local panel = shared_output_panel()
 	if not panel then
 		return
@@ -109,10 +319,12 @@ local function render_stack_tab(session, opts)
 	local key = debug_stack_key(root)
 	local lines = {}
 	local groups = {}
+	local actions = {}
 
-	local function add(text, group)
+	local function add(text, group, action)
 		lines[#lines + 1] = tostring(text or "")
 		groups[#groups + 1] = group or "UCoreOutputInfo"
+		actions[#actions + 1] = action
 	end
 
 	add("Debug Stack", "UCoreOutputTitle")
@@ -168,10 +380,14 @@ local function render_stack_tab(session, opts)
 		for index, item in ipairs(frames) do
 			local marker = frame and item.id == frame.id and ">" or " "
 			local label = string.format("%s %02d %s", marker, index, tostring(item.name or "<frame>"))
-			add(label, marker == ">" and "UCoreOutputSuccess" or "UCoreOutputInfo")
+			add(label, marker == ">" and "UCoreOutputSuccess" or "UCoreOutputInfo", function()
+				jump_to_frame(item)
+			end)
 			local source = normalize(item.source and item.source.path or "")
 			if source ~= "" then
-				add("    " .. source .. ":" .. tostring(item.line or 0), "UCoreOutputMuted")
+				add("    " .. source .. ":" .. tostring(item.line or 0), "UCoreOutputMuted", function()
+					jump_to_frame(item)
+				end)
 			end
 		end
 	end
@@ -182,6 +398,7 @@ local function render_stack_tab(session, opts)
 		focus = opts.focus == true,
 		status = "running",
 		line_groups = groups,
+		line_actions = actions,
 	})
 end
 
@@ -499,7 +716,7 @@ local function find_source_window()
 	return current
 end
 
-local function jump_to_frame(frame)
+jump_to_frame = function(frame)
 	local path = normalize(frame and frame.source and frame.source.path or nil)
 	local line = tonumber(frame and frame.line or 1) or 1
 	local col = math.max((tonumber(frame and frame.column or 1) or 1) - 1, 0)
@@ -3011,6 +3228,7 @@ local function attach_with_process(process, ctx)
 
 	state.attach_in_progress = true
 	state.attach_target_pid = pid
+	ensure_debug_output(cwd, nil)
 	ensure_dap_adapter_async(function(ok, err)
 		if not ok then
 			state.attach_in_progress = false
@@ -3119,8 +3337,28 @@ function M.launch_editor()
 			spawn_editor_process(launch_ctx, function(launch_pid, launch_err)
 				if launch_err then
 					state.launch_in_progress = false
+					stop_unreal_log_tail()
 					return vim.notify("UDebugTool: " .. tostring(launch_err), vim.log.levels.ERROR)
 				end
+
+				open_unreal_output(launch_ctx.root, {
+					"Project: " .. tostring(launch_ctx.project_name or ""),
+					"Engine:  " .. tostring(launch_ctx.engine_root or ""),
+					"Editor:  " .. tostring(launch_ctx.editor_exe or ""),
+					"",
+					"Starting Unreal Editor...",
+				}, {
+					focus = true,
+					line_groups = {
+						"UCoreOutputCommand",
+						"UCoreOutputCommand",
+						"UCoreOutputCommand",
+						nil,
+						"UCoreOutputInfo",
+					},
+				})
+				ensure_debug_output(launch_ctx.root, nil)
+				start_unreal_log_tail(launch_ctx)
 
 				vim.notify(
 					"UDebugTool: launched Unreal Editor (" .. tostring(launch_pid) .. "), waiting to attach",
@@ -3133,6 +3371,11 @@ function M.launch_editor()
 				wait_for_editor_attach_target(launch_ctx, launch_pid, function(process, wait_err)
 					state.launch_in_progress = false
 					if not process then
+						append_debug_output(launch_ctx.root, tostring(wait_err), {
+							focus = true,
+							group = "UCoreOutputWarning",
+							status = "running",
+						})
 						return vim.notify("UDebugTool: " .. tostring(wait_err), vim.log.levels.WARN)
 					end
 					attach_with_process(process, launch_ctx)
@@ -3141,23 +3384,16 @@ function M.launch_editor()
 		end
 
 		if (config.values.debug or {}).build_before_launch == false then
-			append_debug_output(ctx.root, "Launching Unreal Editor without pre-build", {
-				focus = true,
-				group = "UCoreOutputInfo",
-			})
 			return do_launch(ctx)
 		end
 
 		vim.notify("UDebugTool: building Unreal Editor target before launch", vim.log.levels.INFO)
-		append_debug_output(ctx.root, "Building Unreal Editor target before launch", {
-			focus = true,
-			group = "UCoreOutputCommand",
-		})
 		unreal.build_async("", function(ok, result, build_ctx)
 			if not ok then
 				state.launch_in_progress = false
 				if result ~= "cancelled" then
 					vim.notify("UDebugTool: build failed, not launching Unreal Editor", vim.log.levels.ERROR)
+					stop_unreal_log_tail()
 				end
 				return
 			end
@@ -3166,6 +3402,7 @@ function M.launch_editor()
 			local launch_ctx = refreshed_ctx or ctx
 			if not launch_ctx.editor_exe or vim.fn.filereadable(launch_ctx.editor_exe) ~= 1 then
 				state.launch_in_progress = false
+				stop_unreal_log_tail()
 				return vim.notify("UDebugTool: UnrealEditor.exe was not found after build", vim.log.levels.ERROR)
 			end
 
@@ -3531,13 +3768,17 @@ function M.setup()
 				state.attach_target_pid = nil
 				close_hover_float()
 				local root = active_root()
+				local ctx = root and project_context(root) or nil
+				if ctx then
+					start_unreal_log_tail(ctx)
+				end
 				append_debug_output(root, "Debug session initialized", {
 					focus = true,
 					group = "UCoreOutputSuccess",
 					title = "Unreal",
 					kind = "unreal",
 				})
-				render_stack_tab(dap.session(), { focus = true })
+				render_stack_tab(dap.session(), { focus = false })
 				if root then
 					restore_project_breakpoints(root)
 				end
@@ -3564,8 +3805,6 @@ function M.setup()
 						debug_ui.set_stop_event(body)
 						if frame then
 							set_session_frame(session, thread_id, frame)
-							local source_path = normalize(frame.source and frame.source.path or "")
-							local frame_label = tostring(frame.name or "<frame>")
 							if stop_frame_is_meaningful(frame) then
 								jump_to_frame(frame)
 							end
@@ -3580,6 +3819,7 @@ function M.setup()
 			dap.listeners.after.event_continued.udebugtool = function()
 				close_hover_float()
 				render_stack_tab(dap.session(), { focus = false })
+				focus_unreal_output(active_root())
 				local debug_ui = require("udebugtool.debug.ui")
 				if auto_open_ui_enabled() or debug_ui.is_open() then
 					debug_ui.mark_running(dap.session())
@@ -3588,6 +3828,7 @@ function M.setup()
 			dap.listeners.before.event_terminated.udebugtool = function()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
+				stop_unreal_log_tail()
 				close_hover_float()
 				append_debug_output(active_root(), "Debug session terminated", {
 					focus = true,
@@ -3596,7 +3837,7 @@ function M.setup()
 					title = "Unreal",
 					kind = "unreal",
 				})
-				render_stack_tab(nil, { focus = true })
+				render_stack_tab(nil, { focus = false })
 				pcall(function()
 					require("udebugtool.debug.ui").set_stop_event(nil)
 				end)
@@ -3607,6 +3848,7 @@ function M.setup()
 			dap.listeners.before.event_exited.udebugtool = function()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
+				stop_unreal_log_tail()
 				close_hover_float()
 				append_debug_output(active_root(), "Debug session exited", {
 					focus = true,
@@ -3615,7 +3857,7 @@ function M.setup()
 					title = "Unreal",
 					kind = "unreal",
 				})
-				render_stack_tab(nil, { focus = true })
+				render_stack_tab(nil, { focus = false })
 				pcall(function()
 					require("udebugtool.debug.ui").set_stop_event(nil)
 				end)
@@ -3633,6 +3875,7 @@ end
 
 function M.reset()
 	pcall(vim.api.nvim_del_augroup_by_name, "UDebugTool")
+	stop_unreal_log_tail()
 	close_hover_float()
 
 	if dap_available() then
