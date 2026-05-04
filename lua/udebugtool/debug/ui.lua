@@ -5,6 +5,8 @@ local M = {}
 local render_console_panel
 local render_all
 local ensure_layout_autocmds
+local render_controls_panel
+local unpack_fn = table.unpack or unpack
 
 local ns = vim.api.nvim_create_namespace("udebugtool_debug_ui")
 local PANEL_PADDING = 2
@@ -41,6 +43,17 @@ local state = {
 	console_title = "Console",
 	layout_signature = nil,
 	layout_refresh_pending = false,
+	active_control_action = nil,
+	pressed_control_action = nil,
+}
+
+local control_buttons = {
+	{ action = "continue", icon = "", group = "UDebugToolAccent", label = "Continue" },
+	{ action = "step_over", icon = "", group = "UDebugToolToolbarHot", label = "Step Over" },
+	{ action = "step_into", icon = "", group = "UDebugToolToolbarHot", label = "Step Into" },
+	{ action = "step_out", icon = "", group = "UDebugToolToolbarHot", label = "Step Out" },
+	{ action = "restart", icon = "", group = "UDebugToolAccent", label = "Restart" },
+	{ action = "stop", icon = "", group = "UDebugToolDanger", label = "Stop" },
 }
 
 local truncate
@@ -367,6 +380,9 @@ local function apply_buffer_keymaps(slot_name, buf)
 	map("<CR>", function()
 		M.activate_current_item(slot_name)
 	end, "UDebugTool activate item")
+	map("<LeftMouse>", function()
+		M.click_item(slot_name)
+	end, "UDebugTool click item")
 	map("q", M.close, "UDebugTool close ui")
 	map("r", function()
 		M.refresh(current_session())
@@ -527,9 +543,9 @@ local function panel_title(keymap_name)
 	local titles = {
 		scopes = " Locals ",
 		breakpoints = " Breakpoints ",
-		stacks = " Stacks ",
+		stacks = " Threads ",
 		watches_panel = " Watches ",
-		controls = " Controls ",
+		controls = " Call Stack ",
 		console = " Console ",
 	}
 	return titles[keymap_name]
@@ -633,6 +649,55 @@ local function clear_debug_grid()
 		close_win(slot.win)
 		slot.win = nil
 	end
+end
+
+local function refresh_controls_state()
+	local action = nil
+	if valid_win(state.controls.win) and vim.api.nvim_get_current_win() == state.controls.win then
+		local row, col = unpack_fn(vim.api.nvim_win_get_cursor(state.controls.win))
+		local regions = state.controls.item_regions and state.controls.item_regions[row] or nil
+		if regions then
+			for _, region in ipairs(regions) do
+				if col >= (region.start_col or 0) and col < (region.end_col or 0) then
+					local item = region.item
+					if item and item.kind == "control" then
+						action = item.action
+						break
+					end
+				end
+			end
+		end
+	end
+
+	if state.active_control_action == action then
+		return
+	end
+
+	state.active_control_action = action
+	if M.is_open() and state.session ~= nil then
+		render_controls_panel(state.session)
+	elseif M.is_open() then
+		render_controls_panel(nil)
+	end
+end
+
+local function ensure_controls_autocmds()
+	if state.controls_augroup then
+		return
+	end
+
+	local group = vim.api.nvim_create_augroup("UDebugToolControls", { clear = true })
+	state.controls_augroup = group
+	vim.api.nvim_create_autocmd({ "CursorMoved", "WinEnter", "BufEnter", "WinLeave" }, {
+		group = group,
+		callback = function()
+			if vim.in_fast_event() then
+				vim.schedule(refresh_controls_state)
+			else
+				refresh_controls_state()
+			end
+		end,
+	})
 end
 
 local function ensure_docked_containers()
@@ -750,7 +815,7 @@ local function rebuild_debug_grid()
 	ensure_float_slot(state.breakpoints, breakpoints_buf, "breakpoints", cell.row_step, 0, cell.content_width, cell.content_height, { cursorline = true })
 	ensure_float_slot(state.stacks, stacks_buf, "stacks", cell.row_step * 2, 0, cell.content_width, cell.content_height, { cursorline = true })
 	ensure_float_slot(state.watches_panel, watches_buf, "watches_panel", cell.row_step * 3, 0, cell.content_width, cell.content_height, { cursorline = true })
-	ensure_float_slot(state.controls, controls_buf, "controls", cell.row_step * 3, cell.col_step, cell.content_width, cell.content_height, { cursorline = false, wrap = false })
+	ensure_float_slot(state.controls, controls_buf, "controls", cell.row_step * 3, cell.col_step, cell.content_width, cell.content_height, { cursorline = true, wrap = false })
 	ensure_float_slot(state.console_frame, console_frame_buf, "console", console_row, console_col, cell.content_width, cell.content_height, { cursorline = false, wrap = true })
 	ensure_inner_slot(state.console_tabs, console_tabs_buf, console_row + 1, console_col + 1, cell.content_width, 1, {
 		cursorline = false,
@@ -839,7 +904,7 @@ ensure_layout_autocmds = function()
 	})
 end
 
-local function set_lines(slot, lines, items, highlights)
+local function set_lines(slot, lines, items, highlights, item_regions)
 	local buf = slot.buf
 	if not valid_buf(buf) then
 		return
@@ -850,6 +915,7 @@ local function set_lines(slot, lines, items, highlights)
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 	vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
 	slot.items = items or {}
+	slot.item_regions = item_regions or {}
 	for _, hl in ipairs(highlights or {}) do
 		pcall(vim.api.nvim_buf_add_highlight, buf, ns, hl.group, hl.line, hl.start_col or 0, hl.end_col or -1)
 	end
@@ -858,10 +924,17 @@ local function set_lines(slot, lines, items, highlights)
 
 	if valid_win(slot.win) then
 		local current_row = vim.api.nvim_win_get_cursor(slot.win)[1]
-		if not slot.items[current_row] then
+		local current_has_item = slot.items[current_row] ~= nil
+			or (slot.item_regions and slot.item_regions[current_row] and #slot.item_regions[current_row] > 0)
+		if not current_has_item then
 			local target_row = nil
 			for row, _ in pairs(slot.items) do
-				if row > 1 and (not target_row or row < target_row) then
+				if row >= 1 and (not target_row or row < target_row) then
+					target_row = row
+				end
+			end
+			for row, regions in pairs(slot.item_regions or {}) do
+				if regions and #regions > 0 and row >= 1 and (not target_row or row < target_row) then
 					target_row = row
 				end
 			end
@@ -897,6 +970,8 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "UDebugToolDanger", { fg = "#F87171", bold = false })
 	vim.api.nvim_set_hl(0, "UDebugToolToolbarKey", { fg = "#E5EFFF", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolToolbarHot", { fg = "#4FC1FF", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolControlHover", { fg = "#F8FAFC", bg = "#1F2937", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolControlActive", { fg = "#F8FAFC", bg = "#374151", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolBorder", { fg = "#3F3F46" })
 	vim.api.nvim_set_hl(0, "UDebugToolCursorLine", { bg = "#171717" })
 end
@@ -1178,23 +1253,6 @@ local function sorted_thread_ids(session)
 		table.insert(ids, id)
 	end
 	table.sort(ids, function(a, b)
-		local function rank(thread_id)
-			local thread = session and session.threads and session.threads[thread_id] or {}
-			local name = lower(thread.name or "")
-			if name:find("gamethread", 1, true) then
-				return 0
-			end
-			if name:find("mainthread", 1, true) then
-				return 1
-			end
-			return 2
-		end
-
-		local ra = rank(a)
-		local rb = rank(b)
-		if ra ~= rb then
-			return ra < rb
-		end
 		return a < b
 	end)
 	return ids
@@ -1418,6 +1476,7 @@ local function new_builder()
 	return {
 		lines = {},
 		items = {},
+		item_regions = {},
 		highlights = {},
 	}
 end
@@ -1434,6 +1493,9 @@ local function push_line(builder, text, opts)
 	local row = #builder.lines
 	if opts.item then
 		builder.items[row] = opts.item
+	end
+	if opts.item_regions then
+		builder.item_regions[row] = opts.item_regions
 	end
 	if opts.group then
 		add_hl(builder.highlights, opts.group, row - 1, 0, -1)
@@ -2057,14 +2119,13 @@ local function render_stacks_panel(session)
 			padding = 1,
 		})
 	else
-		local default_thread_id = ids[1]
 		for _, thread_id in ipairs(ids) do
 			local thread = session.threads and session.threads[thread_id] or {}
 			local stopped = session.stopped_thread_id == thread_id
 			local key = "thread:" .. tostring(thread_id)
 			local expanded = state.expanded[key]
 			if expanded == nil then
-				expanded = stopped or thread_id == default_thread_id
+				expanded = stopped
 			end
 			local prefix = expanded and "▾" or "▸"
 			local label = tostring(thread.name or ("Thread " .. tostring(thread_id)))
@@ -2078,6 +2139,7 @@ local function render_stacks_panel(session)
 					name = label,
 				},
 			})
+
 			if expanded then
 				local frames = thread.frames or {}
 				if vim.tbl_isempty(frames) then
@@ -2180,22 +2242,102 @@ local function render_watches_panel(session)
 	vim.bo[buf].modifiable = false
 end
 
-local function render_controls_panel(session)
+local function control_button_group(button)
+	if state.pressed_control_action == button.action then
+		return "UDebugToolControlActive"
+	end
+	if state.active_control_action == button.action then
+		return "UDebugToolControlHover"
+	end
+	return button.group
+end
+
+render_controls_panel = function(session)
 	local buf = ensure_buf(state.controls, "UDebugToolControls", "udebugtool-debug-controls")
 	local builder = new_builder()
-	push_line(builder, "          ", {
+	local icon_line = ""
+	local spans = {}
+	local item_regions = {}
+	for index, button in ipairs(control_buttons) do
+		if index > 1 then
+			icon_line = icon_line .. "  "
+		end
+		local start_col = #icon_line
+		icon_line = icon_line .. button.icon
+		local end_col = #icon_line
+		spans[#spans + 1] = {
+			group = control_button_group(button),
+			start_col = start_col,
+			end_col = end_col,
+		}
+		item_regions[#item_regions + 1] = {
+			start_col = start_col + 1,
+			end_col = end_col + 1,
+			item = {
+				kind = "control",
+				action = button.action,
+				name = button.label,
+			},
+		}
+	end
+	push_line(builder, icon_line, {
 		group = "UDebugToolValue",
 		padding = 1,
-		spans = {
-			{ group = "UDebugToolAccent", start_col = 1, end_col = 2 },
-			{ group = "UDebugToolToolbarHot", start_col = 4, end_col = 5 },
-			{ group = "UDebugToolToolbarHot", start_col = 7, end_col = 8 },
-			{ group = "UDebugToolToolbarHot", start_col = 10, end_col = 11 },
-			{ group = "UDebugToolAccent", start_col = 13, end_col = 14 },
-			{ group = "UDebugToolDanger", start_col = 16, end_col = 17 },
-		},
+		spans = spans,
+		item_regions = item_regions,
 	})
-	set_lines(state.controls, builder.lines, builder.items, builder.highlights)
+
+	if not session then
+		push_line(builder, "", { padding = 0 })
+		push_line(builder, "No active session", { group = "UDebugToolMuted", padding = 1 })
+		set_lines(state.controls, builder.lines, builder.items, builder.highlights, builder.item_regions)
+		vim.bo[buf].modifiable = false
+		return
+	end
+
+	push_line(builder, "", { padding = 0 })
+
+	local thread_id = session.stopped_thread_id
+	local thread = thread_id and session.threads and session.threads[thread_id] or nil
+	local label = thread and tostring(thread.name or ("Thread " .. tostring(thread_id))) or "Current Thread"
+	push_line(builder, label, {
+		group = "UDebugToolSection",
+		padding = 1,
+	})
+
+	if state.running then
+		push_line(builder, "Running...", { group = "UDebugToolMuted", padding = 1 })
+	elseif not thread_id then
+		push_line(builder, "No stopped thread", { group = "UDebugToolMuted", padding = 1 })
+	else
+		local frames = thread and thread.frames or {}
+		if vim.tbl_isempty(frames) then
+			push_line(builder, "loading...", { group = "UDebugToolMuted", padding = 1 })
+		else
+			for index, frame in ipairs(frames) do
+				local current = session.current_frame and frame.id == session.current_frame.id
+				local item = {
+					kind = "frame",
+					frame = frame,
+					thread_id = thread_id,
+					name = frame.name or "<frame>",
+					value = frame_location(frame),
+				}
+				push_line(builder, string.format("%02d %s", index, tostring(frame.name or "<frame>")), {
+					group = current and "UDebugToolCurrent" or "UDebugToolValue",
+					padding = 1,
+					item = item,
+				})
+				push_line(builder, frame_location(frame), {
+					group = current and "UDebugToolMarker" or "UDebugToolMuted",
+					padding = 2,
+					item = item,
+				})
+			end
+		end
+	end
+
+	set_lines(state.controls, builder.lines, builder.items, builder.highlights, builder.item_regions)
 	vim.bo[buf].modifiable = false
 end
 
@@ -2315,7 +2457,17 @@ local function current_item(slot_name)
 	if not slot or not valid_win(slot.win) then
 		return nil
 	end
-	local row = vim.api.nvim_win_get_cursor(slot.win)[1]
+	local cursor = vim.api.nvim_win_get_cursor(slot.win)
+	local row = cursor[1]
+	local col = cursor[2]
+	local regions = slot.item_regions and slot.item_regions[row] or nil
+	if regions then
+		for _, region in ipairs(regions) do
+			if col >= (region.start_col or 0) and col < (region.end_col or 0) then
+				return region.item
+			end
+		end
+	end
 	return slot.items[row]
 end
 
@@ -2345,6 +2497,7 @@ end
 function M.open()
 	setup_highlights()
 	ensure_cursorline_autocmds()
+	ensure_controls_autocmds()
 	ensure_layout_autocmds()
 	sync_watches()
 	state.console_title = "Console"
@@ -2451,6 +2604,8 @@ function M.close()
 	state.toolbar.items = {}
 	state.layout_signature = nil
 	state.layout_refresh_pending = false
+	state.active_control_action = nil
+	state.pressed_control_action = nil
 end
 
 function M.is_open()
@@ -2518,6 +2673,25 @@ function M.activate_current_item(slot_name)
 		return vim.defer_fn(function()
 			M.refresh(state.session)
 		end, 80)
+	end
+
+	if item.kind == "control" then
+		local debug = require("udebugtool.debug")
+		local action = item.action and debug[item.action] or nil
+		if type(action) ~= "function" then
+			return
+		end
+		state.pressed_control_action = item.action
+		render_controls_panel(state.session)
+		vim.defer_fn(function()
+			if state.pressed_control_action == item.action then
+				state.pressed_control_action = nil
+				if M.is_open() then
+					render_controls_panel(state.session)
+				end
+			end
+		end, 120)
+		return action()
 	end
 
 	if item.kind == "thread" and state.session then
@@ -2589,6 +2763,29 @@ function M.activate_current_item(slot_name)
 		render_all(state.session)
 		return
 	end
+end
+
+function M.click_item(slot_name)
+	slot_name = slot_name or current_slot_name()
+	if not slot_name then
+		return
+	end
+
+	local slot = state[slot_name]
+	if not slot or not valid_win(slot.win) then
+		return
+	end
+
+	local mouse = vim.fn.getmousepos()
+	if tonumber(mouse.winid or 0) ~= slot.win then
+		return
+	end
+
+	local row = math.max(1, tonumber(mouse.line or 1) or 1)
+	local col = math.max(0, (tonumber(mouse.column or 1) or 1) - 1)
+	pcall(vim.api.nvim_set_current_win, slot.win)
+	pcall(vim.api.nvim_win_set_cursor, slot.win, { row, col })
+	M.activate_current_item(slot_name)
 end
 
 function M.set_stop_event(body)
