@@ -3374,9 +3374,18 @@ function M.list_breakpoints()
 			return item.label
 		end,
 		on_choice = function(item)
-			vim.cmd.edit(vim.fn.fnameescape(item.path))
-			pcall(vim.api.nvim_win_set_cursor, 0, { item.line, 0 })
-			vim.cmd("normal! zz")
+			local bufnr = ensure_buffer(item.path)
+			if not bufnr then
+				return
+			end
+
+			local win = find_source_window()
+			if valid_win(win) then
+				pcall(vim.api.nvim_set_current_win, win)
+				pcall(vim.api.nvim_win_set_buf, win, bufnr)
+				pcall(vim.api.nvim_win_set_cursor, win, { item.line, 0 })
+				pcall(vim.cmd, "normal! zvzz")
+			end
 		end,
 	})
 end
