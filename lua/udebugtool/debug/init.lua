@@ -11,7 +11,6 @@ local jump_to_frame
 
 local redirect_group = "udebugtool_debug_redirect"
 local track_ns = vim.api.nvim_create_namespace("udebugtool_debug_track")
-local buffer_allows_hover
 local ensure_buffer
 
 local state = {
@@ -20,20 +19,6 @@ local state = {
 	adapter_waiters = {},
 	attach_in_progress = false,
 	attach_target_pid = nil,
-	hover = {
-		anchor = nil,
-		buf = nil,
-		children_cache = {},
-		expanded = {},
-		items = {},
-		key = nil,
-		move_seq = 0,
-		request_id = 0,
-		root = nil,
-		source_buf = nil,
-		source_win = nil,
-		win = nil,
-	},
 	launch_in_progress = false,
 	loaded_roots = {},
 	redirected = {},
@@ -648,58 +633,29 @@ local function auto_close_ui_enabled()
 	return ui_config.auto_close ~= false
 end
 
-local function hover_config()
-	return ((config.values.debug or {}).hover or {})
-end
-
-local function hover_enabled()
-	return hover_config().auto ~= false
-end
-
-local function hover_debounce_ms()
-	local value = tonumber(hover_config().debounce_ms)
-	if value and value >= 0 then
-		return math.floor(value)
-	end
-	return 120
-end
-
-local function hover_max_children()
-	local value = tonumber(hover_config().max_children)
-	if value and value > 0 then
-		return math.floor(value)
-	end
-	return 8
-end
-
 local function valid_win(win)
 	return win and vim.api.nvim_win_is_valid(win)
 end
 
-local function close_hover_float()
-	if valid_win(state.hover.win) then
-		pcall(vim.api.nvim_win_close, state.hover.win, true)
+local function buffer_allows_source(bufnr)
+	if not bufnr or bufnr == 0 or not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
 	end
-	if state.hover.source_buf and vim.api.nvim_buf_is_valid(state.hover.source_buf) then
-		pcall(vim.keymap.del, "n", "<CR>", { buffer = state.hover.source_buf })
+	if vim.bo[bufnr].buftype ~= "" then
+		return false
 	end
-	state.hover.win = nil
-	state.hover.buf = nil
-	state.hover.items = {}
-	state.hover.key = nil
-	state.hover.root = nil
-	state.hover.anchor = nil
-	state.hover.source_buf = nil
-	state.hover.source_win = nil
-	state.hover.children_cache = {}
-	state.hover.expanded = {}
+	local filetype = tostring(vim.bo[bufnr].filetype or "")
+	if filetype:find("^udebugtool", 1, false) then
+		return false
+	end
+	return true
 end
 
 local function normal_source_window(win)
 	if not valid_win(win) then
 		return false
 	end
-	return buffer_allows_hover(vim.api.nvim_win_get_buf(win))
+	return buffer_allows_source(vim.api.nvim_win_get_buf(win))
 end
 
 local function find_source_window()
@@ -932,668 +888,6 @@ local function wait_for_best_stop_frame(session, attempts, delay_ms, callback)
 	end
 
 	run()
-end
-
-local function hover_session()
-	if not dap_available() then
-		return nil
-	end
-	local ok, dap = pcall(require, "dap")
-	if not ok or not dap then
-		return nil
-	end
-	return dap.session()
-end
-
-buffer_allows_hover = function(bufnr)
-	if not bufnr or bufnr == 0 or not vim.api.nvim_buf_is_valid(bufnr) then
-		return false
-	end
-	if vim.bo[bufnr].buftype ~= "" then
-		return false
-	end
-	local filetype = tostring(vim.bo[bufnr].filetype or "")
-	if filetype:find("^udebugtool", 1, false) then
-		return false
-	end
-	return true
-end
-
-local function trim_expression_edges(expr)
-	expr = tostring(expr or "")
-	while expr ~= "" and expr:match("^[%.:%-%>%[]") do
-		expr = expr:sub(2)
-	end
-	while expr ~= "" and expr:match("[%.:%-%>%[]$") do
-		expr = expr:sub(1, -2)
-	end
-	return vim.trim(expr)
-end
-
-local function expression_under_cursor(win)
-	win = win or 0
-	local bufnr = vim.api.nvim_win_get_buf(win)
-	if not buffer_allows_hover(bufnr) then
-		return nil
-	end
-
-	local cursor = vim.api.nvim_win_get_cursor(win)
-	local row = cursor[1]
-	local col = cursor[2]
-	local line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ""
-	if line == "" then
-		return nil
-	end
-
-	local function allowed(ch)
-		return ch:match("[%w_]") ~= nil or ch == "." or ch == ":" or ch == "-" or ch == ">" or ch == "[" or ch == "]"
-	end
-
-	local width = #line
-	local index = math.min(col + 1, width)
-	if index < 1 then
-		index = 1
-	end
-
-	if index > width or not allowed(line:sub(index, index)) then
-		if index > 1 and allowed(line:sub(index - 1, index - 1)) then
-			index = index - 1
-		else
-			return nil
-		end
-	end
-
-	local left = index
-	while left > 1 and allowed(line:sub(left - 1, left - 1)) do
-		left = left - 1
-	end
-
-	local right = index
-	while right < width and allowed(line:sub(right + 1, right + 1)) do
-		right = right + 1
-	end
-
-	local expr = trim_expression_edges(line:sub(left, right))
-	if expr == "" or not expr:match("[%a_][%w_]*") then
-		return nil
-	end
-
-	return {
-		bufnr = bufnr,
-		col = col,
-		expression = expr,
-		end_col = right - 1,
-		start_col = left - 1,
-		key = string.format("%d:%d:%d:%d:%s", bufnr, row, left - 1, right - 1, expr),
-		row = row,
-		win = win,
-	}
-end
-
-local function hover_variable_has_children(variable)
-	local ref = tonumber(variable and variable.variablesReference or 0) or 0
-	local named = tonumber(variable and variable.namedVariables or 0) or 0
-	local indexed = tonumber(variable and variable.indexedVariables or 0) or 0
-	return ref > 0 or named > 0 or indexed > 0, ref
-end
-
-local function hover_item_key(variable, fallback)
-	local has_children, ref = hover_variable_has_children(variable)
-	if has_children and ref > 0 then
-		return "ref:" .. tostring(ref), ref
-	end
-	return fallback or tostring(variable.name or variable.expression or "?"), ref
-end
-
-local function hover_container_tokens(variable)
-	local named = tonumber(variable and variable.namedVariables or 0) or 0
-	local indexed = tonumber(variable and variable.indexedVariables or 0) or 0
-	if indexed > 0 and named == 0 then
-		return "[", "]"
-	end
-	return "{", "}"
-end
-
-local function get_hover_children_cache(ref)
-	return state.hover.children_cache[tostring(ref)]
-end
-
-local function fetch_hover_children(session, ref, callback)
-	ref = tonumber(ref or 0) or 0
-	if ref <= 0 or not session then
-		return callback({}, nil)
-	end
-
-	local key = tostring(ref)
-	local cache = state.hover.children_cache[key]
-	if cache and cache.loaded then
-		return callback(cache.variables or {}, cache.error)
-	end
-	if cache and cache.pending then
-		table.insert(cache.waiters, callback)
-		return
-	end
-
-	cache = {
-		error = nil,
-		loaded = false,
-		pending = true,
-		variables = {},
-		waiters = { callback },
-	}
-	state.hover.children_cache[key] = cache
-
-	session:request("variables", { variablesReference = ref }, function(err, response)
-		cache.pending = false
-		cache.loaded = true
-		cache.error = err
-		cache.variables = response and response.variables or {}
-		local waiters = cache.waiters or {}
-		cache.waiters = {}
-		for _, waiter in ipairs(waiters) do
-			waiter(cache.variables, err)
-		end
-	end)
-end
-
-local function hover_current_item()
-	if not valid_win(state.hover.win) then
-		return nil
-	end
-	local row = vim.api.nvim_win_get_cursor(state.hover.win)[1]
-	return state.hover.items[row]
-end
-
-local function hover_has_children(response)
-	local ref = tonumber(response and response.variablesReference or 0) or 0
-	local named = tonumber(response and response.namedVariables or 0) or 0
-	local indexed = tonumber(response and response.indexedVariables or 0) or 0
-	return ref > 0 or named > 0 or indexed > 0
-end
-
-local function hover_is_pointer_like(response)
-	local type_name = tostring(response and response.type or "")
-	local value = tostring(response and response.result or "")
-	if type_name:find("%*$") or type_name:find("%s%*$") then
-		return true
-	end
-	if value:match("^0x[%x]+$") then
-		return true
-	end
-	return false
-end
-
-local function hover_should_open(response)
-	if not hover_has_children(response) then
-		return false
-	end
-	if hover_is_pointer_like(response) then
-		return false
-	end
-	return true
-end
-
-local function hover_popup_position(anchor, width, height)
-	local win = valid_win(anchor and anchor.win) and anchor.win or 0
-	local win_width = win > 0 and vim.api.nvim_win_get_width(win) or vim.o.columns
-	local win_height = win > 0 and vim.api.nvim_win_get_height(win) or vim.o.lines
-	local start_col = tonumber(anchor and anchor.start_col or 0) or 0
-	local end_col = tonumber(anchor and anchor.end_col or start_col) or start_col
-	local row = math.max(tonumber(anchor and anchor.row or 1) or 1, 0)
-	local col = end_col + 2
-
-	if col + width > win_width then
-		col = math.max(start_col - width - 2, 0)
-	end
-	if row + height > win_height then
-		row = math.max(row - height - 1, 0)
-	end
-
-	return win, row, col
-end
-
-local function ensure_hover_buffer()
-	if state.hover.buf and vim.api.nvim_buf_is_valid(state.hover.buf) then
-		return state.hover.buf
-	end
-
-	local buf = vim.api.nvim_create_buf(false, true)
-	vim.bo[buf].bufhidden = "wipe"
-	vim.bo[buf].buftype = "nofile"
-	vim.bo[buf].filetype = "udebugtool-hover"
-	vim.bo[buf].swapfile = false
-
-	local function map(lhs, rhs, desc)
-		vim.keymap.set("n", lhs, rhs, {
-			buffer = buf,
-			nowait = true,
-			silent = true,
-			desc = desc,
-		})
-	end
-
-	map("q", close_hover_float, "UDebugTool close hover")
-	map("<Esc>", close_hover_float, "UDebugTool close hover")
-	map("<CR>", function()
-		M.hover_activate()
-	end, "UDebugTool toggle hover item")
-	map(" ", function()
-		M.hover_toggle_item()
-	end, "UDebugTool toggle hover item")
-	map("r", function()
-		M.hover()
-	end, "UDebugTool refresh hover")
-
-	state.hover.buf = buf
-	return buf
-end
-
-local function hover_display_name(entry)
-	return tostring(entry.name or entry.expression or "?")
-end
-
-local function hover_leaf_text(entry)
-	local name = hover_display_name(entry)
-	local value = tostring(entry.value or entry.result or "")
-	return string.format("%s: %s", name, value)
-end
-
-local function render_hover_variable(lines, items, session, entry, depth, is_root)
-	local key, ref = hover_item_key(entry)
-	local has_children = (tonumber(ref or 0) or 0) > 0
-	local expanded = has_children and state.hover.expanded[key] == true or nil
-	local indent = string.rep("  ", depth)
-
-	if not has_children then
-		table.insert(lines, indent .. hover_leaf_text(entry))
-		items[#lines] = {
-			entry = entry,
-			key = key,
-			ref = ref,
-		}
-		return
-	end
-
-	local open_token, close_token = hover_container_tokens(entry)
-	local name = hover_display_name(entry)
-	local prefix = expanded and "[-]" or "[+]"
-	local header = string.format("%s%s %s", indent, prefix, name)
-	if not expanded then
-		header = header .. " " .. open_token .. "..." .. close_token
-	end
-
-	table.insert(lines, header)
-	items[#lines] = {
-		entry = entry,
-		key = key,
-		ref = ref,
-	}
-
-	if not expanded then
-		return
-	end
-
-	local cache = get_hover_children_cache(ref)
-	local child_indent = string.rep("  ", depth + 1)
-	table.insert(lines, indent .. open_token)
-	if not cache then
-		table.insert(lines, child_indent .. "loading...")
-		table.insert(lines, indent .. close_token)
-		fetch_hover_children(session, ref, function()
-			vim.schedule(function()
-				if valid_win(state.hover.win) then
-					M.render_hover()
-				end
-			end)
-		end)
-		return
-	end
-
-	if cache.pending then
-		table.insert(lines, child_indent .. "loading...")
-		table.insert(lines, indent .. close_token)
-		return
-	end
-
-	if cache.error then
-		table.insert(lines, child_indent .. tostring(cache.error))
-		table.insert(lines, indent .. close_token)
-		return
-	end
-
-	if vim.tbl_isempty(cache.variables or {}) then
-		table.insert(lines, indent .. close_token)
-		return
-	end
-
-	for _, child in ipairs(cache.variables or {}) do
-		render_hover_variable(lines, items, session, child, depth + 1, false)
-	end
-	table.insert(lines, indent .. close_token)
-end
-
-local function hover_target_row(previous_key, items)
-	if previous_key then
-		for row, item in pairs(items) do
-			if item.key == previous_key then
-				return row
-			end
-		end
-	end
-	return 1
-end
-
-local function open_or_update_hover_float(lines, anchor)
-	local buf = ensure_hover_buffer()
-	local width = 0
-	for _, line in ipairs(lines) do
-		width = math.max(width, vim.fn.strdisplaywidth(line))
-	end
-	width = math.max(28, math.min(width + 2, 100))
-	local height = math.max(1, math.min(#lines, 18))
-
-	local source_win, row, col = hover_popup_position(anchor, width, height)
-	local config = {
-		border = "rounded",
-		col = col,
-		focusable = true,
-		height = height,
-		noautocmd = true,
-		relative = "win",
-		row = row,
-		style = "minimal",
-		title = " Debug Inspect ",
-		width = width,
-		win = source_win,
-		zindex = 70,
-	}
-
-	if valid_win(state.hover.win) then
-		vim.api.nvim_win_set_config(state.hover.win, config)
-	else
-		state.hover.win = vim.api.nvim_open_win(buf, false, config)
-		vim.wo[state.hover.win].cursorline = true
-		vim.wo[state.hover.win].winhighlight = "NormalFloat:NormalFloat,FloatBorder:FloatBorder,CursorLine:Visual"
-		vim.wo[state.hover.win].wrap = false
-	end
-
-	vim.bo[buf].modifiable = true
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-	vim.bo[buf].modifiable = false
-end
-
-local function render_hover_popup(anchor)
-	local session = hover_session()
-	if not session or not state.hover.root then
-		return close_hover_float()
-	end
-
-	local previous_item = hover_current_item()
-	local previous_key = previous_item and previous_item.key or nil
-	local lines = {}
-	local items = {}
-	render_hover_variable(lines, items, session, state.hover.root, 0, true)
-	if vim.tbl_isempty(lines) then
-		lines = { tostring(state.hover.root.expression or state.hover.root.name or "?") }
-	end
-
-	open_or_update_hover_float(lines, anchor or state.hover.anchor)
-	state.hover.items = items
-
-	if valid_win(state.hover.win) then
-		local row = math.min(hover_target_row(previous_key, items), #lines)
-		pcall(vim.api.nvim_win_set_cursor, state.hover.win, { row, 0 })
-	end
-end
-
-local function focus_hover_float()
-	if valid_win(state.hover.win) then
-		pcall(vim.api.nvim_set_current_win, state.hover.win)
-	end
-end
-
-local function install_hover_source_keymap(snapshot)
-	local bufnr = snapshot and snapshot.bufnr or nil
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		return
-	end
-
-	state.hover.source_buf = bufnr
-	vim.keymap.set("n", "<CR>", function()
-		M.hover_activate()
-	end, {
-		buffer = bufnr,
-		silent = true,
-		desc = "UDebugTool hover focus",
-	})
-end
-
-local function ensure_hover_frame(session, callback)
-	if not session then
-		return callback(nil)
-	end
-	if session.current_frame then
-		return callback(session.current_frame)
-	end
-	if not session.stopped_thread_id then
-		return callback(nil)
-	end
-
-	session:update_threads(function()
-		local thread = session.threads and session.threads[session.stopped_thread_id]
-		if not thread then
-			return callback(nil)
-		end
-
-		if thread.frames and #thread.frames > 0 then
-			if not session.current_frame then
-				session.current_frame = thread.frames[1]
-			end
-			return callback(session.current_frame)
-		end
-
-		session:request("stackTrace", {
-			threadId = session.stopped_thread_id,
-			startFrame = 0,
-			levels = 20,
-		}, function(_, response)
-			thread.frames = response and response.stackFrames or {}
-			if not session.current_frame and thread.frames[1] then
-				session.current_frame = thread.frames[1]
-			end
-			callback(session.current_frame)
-		end)
-	end)
-end
-
-local function same_hover_context(snapshot)
-	if not snapshot or not valid_win(snapshot.win) then
-		return false
-	end
-	local current = expression_under_cursor(snapshot.win)
-	return current and current.key == snapshot.key
-end
-
-local function show_hover_for_snapshot(snapshot, opts)
-	local session = hover_session()
-	if not session then
-		return close_hover_float()
-	end
-
-	if not snapshot then
-		return
-	end
-
-	local request_id = state.hover.request_id + 1
-	state.hover.request_id = request_id
-
-	ensure_hover_frame(session, function(frame)
-		if not frame then
-			return
-		end
-
-		session:evaluate({
-			expression = snapshot.expression,
-			context = "hover",
-			frameId = frame.id,
-		}, function(err, response)
-			if err or not response then
-				return
-			end
-
-			vim.schedule(function()
-				if request_id ~= state.hover.request_id then
-					return
-				end
-				if opts and opts.require_same_context ~= false and not same_hover_context(snapshot) then
-					return
-				end
-
-				local root = {
-					expression = snapshot.expression,
-					name = snapshot.expression,
-					result = tostring(response.result or ""),
-					type = response.type,
-					value = tostring(response.result or ""),
-					variablesReference = tonumber(response.variablesReference or 0) or 0,
-					namedVariables = tonumber(response.namedVariables or 0) or 0,
-					indexedVariables = tonumber(response.indexedVariables or 0) or 0,
-				}
-				if not hover_should_open(response) then
-					return close_hover_float()
-				end
-				local root_key = select(1, hover_item_key(root, "root"))
-				state.hover.key = snapshot.key
-				state.hover.anchor = snapshot
-				state.hover.root = root
-				state.hover.source_buf = snapshot.bufnr
-				state.hover.source_win = snapshot.win
-				state.hover.children_cache = {}
-				state.hover.expanded = {}
-				state.hover.expanded[root_key] = false
-				install_hover_source_keymap(snapshot)
-				render_hover_popup(snapshot)
-			end)
-		end)
-	end)
-end
-
-local function show_hover_for_cursor()
-	if valid_win(state.hover.win) and vim.api.nvim_get_current_win() == state.hover.win then
-		return
-	end
-
-	local current = expression_under_cursor(0)
-	if not current then
-		return close_hover_float()
-	end
-	if valid_win(state.hover.win) and state.hover.key ~= current.key then
-		return close_hover_float()
-	end
-	if state.hover.key == current.key and valid_win(state.hover.win) then
-		return
-	end
-	show_hover_for_snapshot(current, { require_same_context = true })
-end
-
-local function schedule_hover_for_cursor()
-	if not hover_enabled() then
-		return
-	end
-	if valid_win(state.hover.win) and vim.api.nvim_get_current_win() == state.hover.win then
-		return
-	end
-
-	local sequence = state.hover.move_seq + 1
-	state.hover.move_seq = sequence
-	vim.defer_fn(function()
-		if sequence ~= state.hover.move_seq then
-			return
-		end
-		if not hover_enabled() then
-			return
-		end
-		vim.schedule(function()
-			show_hover_for_cursor()
-		end)
-	end, hover_debounce_ms())
-end
-
-local function update_hover_visibility()
-	if not valid_win(state.hover.win) then
-		return
-	end
-	if vim.api.nvim_get_current_win() == state.hover.win then
-		return
-	end
-
-	local current = expression_under_cursor(0)
-	if not current or current.key ~= state.hover.key then
-		close_hover_float()
-	end
-end
-
-function M.render_hover()
-	if not valid_win(state.hover.win) or not state.hover.anchor or not state.hover.root then
-		return
-	end
-	render_hover_popup(state.hover.anchor)
-end
-
-local function hover_toggle_item_at_row(row)
-	row = tonumber(row or 0) or 0
-	if row <= 0 then
-		return
-	end
-
-	local item = state.hover.items[row]
-	if not item or not item.key or not item.ref or item.ref <= 0 then
-		return
-	end
-
-	state.hover.expanded[item.key] = not state.hover.expanded[item.key]
-	if state.hover.expanded[item.key] then
-		local session = hover_session()
-		if session then
-			fetch_hover_children(session, item.ref, function()
-				vim.schedule(function()
-					if valid_win(state.hover.win) then
-						M.render_hover()
-					end
-				end)
-			end)
-		end
-	end
-
-	M.render_hover()
-	if valid_win(state.hover.win) then
-		pcall(vim.api.nvim_win_set_cursor, state.hover.win, { row, 0 })
-	end
-end
-
-function M.hover_activate()
-	if not valid_win(state.hover.win) then
-		return
-	end
-
-	local row = 1
-	if vim.api.nvim_get_current_win() == state.hover.win then
-		row = vim.api.nvim_win_get_cursor(state.hover.win)[1]
-	else
-		focus_hover_float()
-		pcall(vim.api.nvim_win_set_cursor, state.hover.win, { 1, 0 })
-	end
-
-	hover_toggle_item_at_row(row)
-end
-
-function M.hover_toggle_item()
-	local item = hover_current_item()
-	if not item then
-		return
-	end
-	local row = valid_win(state.hover.win) and vim.api.nvim_win_get_cursor(state.hover.win)[1] or 0
-	hover_toggle_item_at_row(row)
 end
 
 local function is_header_file(path)
@@ -3479,20 +2773,6 @@ function M.step_out()
 	require("dap").step_out()
 end
 
-function M.hover()
-	if not dap_available() then
-		return notify_missing_dap()
-	end
-	if valid_win(state.hover.win) and vim.api.nvim_get_current_win() == state.hover.win and state.hover.anchor then
-		return show_hover_for_snapshot(state.hover.anchor, { require_same_context = false })
-	end
-	local current = expression_under_cursor(0)
-	if current then
-		return show_hover_for_snapshot(current, { require_same_context = false })
-	end
-	show_hover_for_cursor()
-end
-
 function M.toggle_ui()
 	local debug_ui = require("udebugtool.debug.ui")
 	if debug_ui.is_open and debug_ui.is_open() then
@@ -3725,22 +3005,6 @@ function M.setup()
 	setup_debug_marker_signs()
 
 	local group = vim.api.nvim_create_augroup("UDebugTool", { clear = true })
-	vim.api.nvim_create_autocmd("CursorMoved", {
-		group = group,
-		callback = function()
-			update_hover_visibility()
-			if not hover_enabled() then
-				return
-			end
-			schedule_hover_for_cursor()
-		end,
-	})
-	vim.api.nvim_create_autocmd({ "InsertEnter", "BufLeave" }, {
-		group = group,
-		callback = function()
-			close_hover_float()
-		end,
-	})
 	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "BufEnter" }, {
 		group = group,
 		callback = function(args)
@@ -3767,7 +3031,6 @@ function M.setup()
 			dap.listeners.after.event_initialized.udebugtool = function()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
-				close_hover_float()
 				local root = active_root()
 				local ctx = root and project_context(root) or nil
 				if ctx then
@@ -3789,7 +3052,6 @@ function M.setup()
 				end
 			end
 			dap.listeners.after.event_stopped.udebugtool = function(_, body)
-				close_hover_float()
 				local session = dap.session()
 				local debug_ui = require("udebugtool.debug.ui")
 				state.stop_request_id = state.stop_request_id + 1
@@ -3818,7 +3080,6 @@ function M.setup()
 				end)
 			end
 			dap.listeners.after.event_continued.udebugtool = function()
-				close_hover_float()
 				render_stack_tab(dap.session(), { focus = false })
 				focus_unreal_output(active_root())
 				local debug_ui = require("udebugtool.debug.ui")
@@ -3830,7 +3091,6 @@ function M.setup()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
 				stop_unreal_log_tail()
-				close_hover_float()
 				append_debug_output(active_root(), "Debug session terminated", {
 					focus = true,
 					group = "UCoreOutputWarning",
@@ -3850,7 +3110,6 @@ function M.setup()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
 				stop_unreal_log_tail()
-				close_hover_float()
 				append_debug_output(active_root(), "Debug session exited", {
 					focus = true,
 					group = "UCoreOutputWarning",
@@ -3877,7 +3136,6 @@ end
 function M.reset()
 	pcall(vim.api.nvim_del_augroup_by_name, "UDebugTool")
 	stop_unreal_log_tail()
-	close_hover_float()
 
 	if dap_available() then
 		local ok, dap = pcall(require, "dap")
