@@ -2,6 +2,7 @@ local config = require("udebugtool.config")
 local project = require("udebugtool.project")
 
 local M = {}
+local render_console_panel
 
 local ns = vim.api.nvim_create_namespace("udebugtool_debug_ui")
 
@@ -30,6 +31,8 @@ local state = {
 	stop_event = nil,
 	console_lines = {},
 	console_groups = {},
+	console_title = "Console",
+	output_listener = nil,
 }
 
 local truncate
@@ -63,6 +66,52 @@ end
 
 local function valid_win(win)
 	return win and vim.api.nvim_win_is_valid(win)
+end
+
+local function layout_log_path()
+	return path_join((config.values or {}).cache_dir or (vim.fn.stdpath("cache") .. "/udebugtool"), "debug-ui-layout.log")
+end
+
+local function append_layout_log(tag)
+	local entries = {
+		{ name = "left_anchor", win = state.left.win },
+		{ name = "bottom_anchor", win = state.bottom.win },
+		{ name = "locals", win = state.scopes.win },
+		{ name = "breakpoints", win = state.breakpoints.win },
+		{ name = "stacks", win = state.stacks.win },
+		{ name = "watches", win = state.watches_panel.win },
+		{ name = "controls", win = state.controls.win },
+		{ name = "console", win = state.console.win },
+	}
+
+	local lines = {
+		string.format("[%s] %s", os.date("%Y-%m-%d %H:%M:%S"), tostring(tag or "layout")),
+	}
+	for _, entry in ipairs(entries) do
+		if valid_win(entry.win) then
+			local width = vim.api.nvim_win_get_width(entry.win)
+			local height = vim.api.nvim_win_get_height(entry.win)
+			local pos = vim.api.nvim_win_get_position(entry.win)
+			local cfg_ok, cfg = pcall(vim.api.nvim_win_get_config, entry.win)
+			local relative = (cfg_ok and cfg and cfg.relative ~= "" and cfg.relative) or "split"
+			lines[#lines + 1] = string.format(
+				"  %s: %dx%d @ (%d,%d) [%s]",
+				entry.name,
+				width,
+				height,
+				pos[1],
+				pos[2],
+				relative
+			)
+		else
+			lines[#lines + 1] = string.format("  %s: <invalid>", entry.name)
+		end
+	end
+	lines[#lines + 1] = ""
+
+	local path = layout_log_path()
+	vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+	pcall(vim.fn.writefile, lines, path, "a")
 end
 
 local function current_session()
@@ -141,20 +190,20 @@ local function ui_layout()
 	local rows = vim.o.lines - vim.o.cmdheight
 	local output_panel = shared_output_panel()
 	local output_offset = output_panel and output_panel.is_open and output_panel.is_open() and 13 or 0
-	local usable_rows = math.max(24, rows - output_offset - 2)
-	local sidebar_width = math.max(30, math.min(46, tonumber(ui.sidebar_width) or math.floor(cols * 0.24)))
-	local tray_height = math.max(8, math.min(16, tonumber(ui.tray_height) or math.floor(usable_rows * 0.22)))
+	local usable_rows = math.max(12, rows - output_offset - 2)
+	local cell_width = math.max(24, math.floor((cols - 2) / 3))
+	local cell_height = math.max(6, math.floor((usable_rows - 3) / 4))
 	return {
-		sidebar_width = sidebar_width,
-		locals_height = tonumber(ui.locals_height) or 0.42,
-		breakpoints_height = tonumber(ui.breakpoints_height) or 0.23,
-		stacks_height = tonumber(ui.stacks_height) or 0.35,
-		tray_height = tray_height,
-		stack_height = tray_height,
-		inspect_height = tray_height,
-		watches_width = tonumber(ui.watches_width) or 0.34,
-		controls_width = tonumber(ui.controls_width) or 0.22,
-		console_width = tonumber(ui.console_width) or 0.44,
+		sidebar_width = cell_width,
+		locals_height = tonumber(ui.locals_height) or 0.333,
+		breakpoints_height = tonumber(ui.breakpoints_height) or 0.333,
+		stacks_height = tonumber(ui.stacks_height) or 0.334,
+		tray_height = cell_height,
+		stack_height = cell_height,
+		inspect_height = cell_height,
+		watches_width = tonumber(ui.watches_width) or 0.333,
+		controls_width = tonumber(ui.controls_width) or 0.333,
+		console_width = tonumber(ui.console_width) or 0.334,
 		toolbar_width = math.max(56, math.min(84, tonumber(ui.toolbar_width) or 74)),
 		toolbar_height = 3,
 		output_offset = output_offset,
@@ -209,11 +258,21 @@ local function setup_window(win, opts)
 	vim.wo[win].foldcolumn = "0"
 	vim.wo[win].spell = false
 	vim.wo[win].wrap = opts.wrap == true
-	vim.wo[win].cursorline = opts.cursorline ~= false
+	vim.wo[win].cursorline = opts.cursorline == true
 	vim.wo[win].winfixwidth = opts.winfixwidth == true
 	vim.wo[win].winfixheight = opts.winfixheight == true
 	vim.wo[win].list = false
 	vim.wo[win].conceallevel = 0
+	local winhl = {
+		"Normal:Normal",
+		"SignColumn:Normal",
+		"EndOfBuffer:Normal",
+		opts.float == true and "FloatBorder:UDebugToolBorder" or "WinSeparator:UDebugToolBorder",
+		opts.cursorline == true and "CursorLine:UDebugToolCursorLine" or nil,
+	}
+	vim.wo[win].winhl = table.concat(vim.tbl_filter(function(item)
+		return item ~= nil
+	end, winhl), ",")
 end
 
 local function apply_buffer_keymaps(slot_name, buf)
@@ -385,146 +444,142 @@ local function open_toolbar()
 	return win, buf
 end
 
-local function resize_sidebar_layout()
-	local layout = ui_layout()
-	local wins = { state.scopes.win, state.breakpoints.win, state.stacks.win }
-	local valid = {}
-	for _, win in ipairs(wins) do
-		if valid_win(win) then
-			table.insert(valid, win)
-			vim.api.nvim_win_set_width(win, layout.sidebar_width)
-		end
-	end
-	if #valid == 0 then
-		return
-	end
-
-	local total = 0
-	for _, win in ipairs(valid) do
-		total = total + vim.api.nvim_win_get_height(win)
-	end
-	if total <= 0 then
-		return
-	end
-
-	local ratios = {
-		layout.locals_height,
-		layout.breakpoints_height,
-		layout.stacks_height,
+local function float_win_config(row, col, width, height)
+	return {
+		relative = "editor",
+		row = row,
+		col = col,
+		width = width,
+		height = height,
+		style = "minimal",
+		border = "single",
+		focusable = true,
+		zindex = 70,
+		noautocmd = true,
 	}
-	local assigned = 0
-	for index, win in ipairs(valid) do
-		local target
-		if index == #valid then
-			target = math.max(1, total - assigned)
-		else
-			target = math.max(1, math.floor(total * (ratios[index] or 0.25)))
-			assigned = assigned + target
+end
+
+local function ensure_float_slot(slot, buf, keymap_name, row, col, width, height, opts)
+	opts = opts or {}
+	local win_config = float_win_config(row, col, width, height)
+	local win = slot.win
+	if valid_win(win) then
+		local ok, cfg = pcall(vim.api.nvim_win_get_config, win)
+		if not ok or not cfg or cfg.relative == "" then
+			close_win(win)
+			win = nil
+			slot.win = nil
 		end
-		pcall(vim.api.nvim_win_set_height, win, target)
+	end
+
+	if not valid_win(win) then
+		win = vim.api.nvim_open_win(buf, false, win_config)
+		slot.win = win
+	else
+		pcall(vim.api.nvim_win_set_config, win, win_config)
+		if vim.api.nvim_win_get_buf(win) ~= buf then
+			vim.api.nvim_win_set_buf(win, buf)
+		end
+	end
+
+	setup_window(win, {
+		cursorline = opts.cursorline == true,
+		winfixwidth = true,
+		winfixheight = true,
+		wrap = opts.wrap == true,
+		float = true,
+	})
+	apply_buffer_keymaps(keymap_name, buf)
+	return win, buf
+end
+
+local function clear_debug_grid()
+	for _, slot in ipairs({
+		state.left,
+		state.bottom,
+		state.scopes,
+		state.breakpoints,
+		state.stacks,
+		state.watches_panel,
+		state.controls,
+		state.console,
+	}) do
+		close_win(slot.win)
+		slot.win = nil
 	end
 end
 
-local function resize_tray_layout()
+local function ensure_docked_containers()
 	local layout = ui_layout()
-	local wins = { state.watches_panel.win, state.controls.win, state.console.win }
-	local valid = {}
-	for _, win in ipairs(wins) do
-		if valid_win(win) then
-			table.insert(valid, win)
-			pcall(vim.api.nvim_win_set_height, win, layout.tray_height)
-		end
-	end
+	local left_buf = ensure_buf(state.left, "UDebugToolSidebar", "udebugtool-debug-sidebar")
+	local bottom_buf = ensure_buf(state.bottom, "UDebugToolTray", "udebugtool-debug-tray")
+	local anchor = find_anchor_win()
+	local sidebar_width = math.max(1, layout.sidebar_width - 1)
+	local tray_height = math.max(1, layout.tray_height - 1)
 
-	if #valid == 0 then
-		return
+	if not valid_win(state.left.win) then
+		state.left.win = open_split_from_anchor(anchor, "topleft vsplit")
+		vim.api.nvim_win_set_buf(state.left.win, left_buf)
+		setup_window(state.left.win, { cursorline = false, winfixwidth = true, winfixheight = true })
 	end
+	pcall(vim.api.nvim_win_set_width, state.left.win, sidebar_width)
 
-	local total = 0
-	for _, win in ipairs(valid) do
-		total = total + vim.api.nvim_win_get_width(win)
+	if not valid_win(state.bottom.win) then
+		state.bottom.win = open_split_from_anchor(anchor, "botright split")
+		vim.api.nvim_win_set_buf(state.bottom.win, bottom_buf)
+		setup_window(state.bottom.win, { cursorline = false, winfixwidth = true, winfixheight = true, wrap = false })
 	end
-	if total <= 0 then
-		return
-	end
+	pcall(vim.api.nvim_win_set_height, state.bottom.win, tray_height)
 
-	local targets = {
-		math.max(24, math.floor(total * layout.watches_width)),
-		math.max(20, math.floor(total * layout.controls_width)),
-		math.max(28, math.floor(total * layout.console_width)),
-	}
-	local assigned = 0
-	for index, win in ipairs(valid) do
-		local width
-		if index == #valid then
-			width = math.max(20, total - assigned)
-		else
-			width = targets[index] or math.max(20, math.floor(total / #valid))
-			assigned = assigned + width
-		end
-		pcall(vim.api.nvim_win_set_width, win, width)
-	end
+	append_layout_log("ensure_docked_containers")
 end
 
-local function ensure_sidebar_layout()
+local function ensure_panel_slot(slot, buf, keymap_name, row, col, layout, opts)
+	local content_width = math.max(12, layout.sidebar_width - 2)
+	local content_height = math.max(2, layout.tray_height - 2)
+	return ensure_float_slot(slot, buf, keymap_name, row, col, content_width, content_height, opts)
+end
+
+local function rebuild_debug_grid()
+	ensure_docked_containers()
+	local layout = ui_layout()
 	local scopes_buf = ensure_buf(state.scopes, "UDebugToolLocals", "udebugtool-debug-locals")
 	local breakpoints_buf = ensure_buf(state.breakpoints, "UDebugToolBreakpoints", "udebugtool-debug-breakpoints")
 	local stacks_buf = ensure_buf(state.stacks, "UDebugToolStacks", "udebugtool-debug-stacks")
-	if valid_win(state.scopes.win) and valid_win(state.breakpoints.win) and valid_win(state.stacks.win) then
-		resize_sidebar_layout()
-		return
-	end
-
-	local anchor = find_anchor_win()
-	local scopes_win = open_split_from_anchor(anchor, "topleft vsplit")
-	local breakpoints_win = open_split_from_anchor(scopes_win, "split")
-	local stacks_win = open_split_from_anchor(breakpoints_win, "split")
-
-	state.scopes.win = scopes_win
-	state.breakpoints.win = breakpoints_win
-	state.stacks.win = stacks_win
-
-	vim.api.nvim_win_set_buf(scopes_win, scopes_buf)
-	vim.api.nvim_win_set_buf(breakpoints_win, breakpoints_buf)
-	vim.api.nvim_win_set_buf(stacks_win, stacks_buf)
-
-	setup_window(scopes_win, { cursorline = true, winfixwidth = true })
-	setup_window(breakpoints_win, { cursorline = true, winfixwidth = true })
-	setup_window(stacks_win, { cursorline = true, winfixwidth = true })
-	apply_buffer_keymaps("scopes", scopes_buf)
-	apply_buffer_keymaps("breakpoints", breakpoints_buf)
-	apply_buffer_keymaps("stacks", stacks_buf)
-	resize_sidebar_layout()
-end
-
-local function ensure_tray_layout()
 	local watches_buf = ensure_buf(state.watches_panel, "UDebugToolWatches", "udebugtool-debug-watches")
 	local controls_buf = ensure_buf(state.controls, "UDebugToolControls", "udebugtool-debug-controls")
 	local console_buf = ensure_buf(state.console, "UDebugToolConsole", "udebugtool-debug-console")
-	if valid_win(state.watches_panel.win) and valid_win(state.controls.win) and valid_win(state.console.win) then
-		resize_tray_layout()
-		return
-	end
 
-	local anchor = find_anchor_win()
-	local watches_win = open_split_from_anchor(anchor, "botright split")
-	local controls_win = open_split_from_anchor(watches_win, "vsplit")
-	local console_win = open_split_from_anchor(controls_win, "vsplit")
+	local width = layout.sidebar_width
+	local height = layout.tray_height
 
-	state.watches_panel.win = watches_win
-	state.controls.win = controls_win
-	state.console.win = console_win
+	ensure_panel_slot(state.scopes, scopes_buf, "scopes", 0, 0, layout, { cursorline = true })
+	ensure_panel_slot(state.breakpoints, breakpoints_buf, "breakpoints", height, 0, layout, { cursorline = true })
+	ensure_panel_slot(state.stacks, stacks_buf, "stacks", height * 2, 0, layout, { cursorline = true })
+	ensure_panel_slot(state.watches_panel, watches_buf, "watches_panel", height * 3, 0, layout, { cursorline = true })
+	ensure_panel_slot(state.controls, controls_buf, "controls", height * 3, width, layout, { cursorline = false, wrap = false })
+	ensure_panel_slot(state.console, console_buf, "console", height * 3, width * 2, layout, { cursorline = false, wrap = true })
 
-	vim.api.nvim_win_set_buf(watches_win, watches_buf)
-	vim.api.nvim_win_set_buf(controls_win, controls_buf)
-	vim.api.nvim_win_set_buf(console_win, console_buf)
-	setup_window(watches_win, { cursorline = true, winfixheight = true })
-	setup_window(controls_win, { cursorline = false, winfixheight = true, wrap = false })
-	setup_window(console_win, { cursorline = false, winfixheight = true, wrap = false })
-	apply_buffer_keymaps("watches_panel", watches_buf)
-	apply_buffer_keymaps("controls", controls_buf)
-	apply_buffer_keymaps("console", console_buf)
-	resize_tray_layout()
+	append_layout_log("rebuild_debug_grid")
+end
+
+local function grid_ready()
+	return valid_win(state.scopes.win)
+		and valid_win(state.breakpoints.win)
+		and valid_win(state.stacks.win)
+		and valid_win(state.watches_panel.win)
+		and valid_win(state.controls.win)
+		and valid_win(state.console.win)
+end
+
+local function ensure_sidebar_layout()
+	rebuild_debug_grid()
+	append_layout_log("ensure_sidebar_layout")
+end
+
+local function ensure_tray_layout()
+	rebuild_debug_grid()
+	append_layout_log("ensure_tray_layout")
 end
 
 local function set_lines(slot, lines, items, highlights)
@@ -543,6 +598,23 @@ local function set_lines(slot, lines, items, highlights)
 	end
 	vim.bo[buf].modifiable = false
 	vim.bo[buf].readonly = true
+
+	if valid_win(slot.win) then
+		local current_row = vim.api.nvim_win_get_cursor(slot.win)[1]
+		if not slot.items[current_row] then
+			local target_row = nil
+			for row, _ in pairs(slot.items) do
+				if row > 1 and (not target_row or row < target_row) then
+					target_row = row
+				end
+			end
+			if target_row then
+				pcall(vim.api.nvim_win_set_cursor, slot.win, { target_row, 0 })
+			elseif #lines > 1 then
+				pcall(vim.api.nvim_win_set_cursor, slot.win, { 2, 0 })
+			end
+		end
+	end
 end
 
 local function add_hl(highlights, group, line, start_col, end_col)
@@ -568,6 +640,8 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "UDebugToolDanger", { fg = "#F87171", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolToolbarKey", { fg = "#E5EFFF", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolToolbarHot", { fg = "#4FC1FF", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolBorder", { fg = "#3F3F46" })
+	vim.api.nvim_set_hl(0, "UDebugToolCursorLine", { bg = "#171717" })
 end
 
 local function short_path(path)
@@ -1006,6 +1080,10 @@ local function push_line(builder, text, opts)
 		add_hl(builder.highlights, span.group, row - 1, span.start_col or 0, span.end_col or -1)
 	end
 	return row
+end
+
+local function push_panel_header(builder, title)
+	push_line(builder, " " .. tostring(title), { group = "UDebugToolTitle" })
 end
 
 local function render_variable_tree(builder, session, entry, depth, item_kind, item_payload)
@@ -1470,7 +1548,7 @@ end
 local function render_scopes_panel(session)
 	local buf = ensure_buf(state.scopes, "UDebugToolLocals", "udebugtool-debug-locals")
 	local builder = new_builder()
-	push_line(builder, "Locals", { group = "UDebugToolTitle" })
+	push_panel_header(builder, "Locals")
 
 	if not session then
 		push_line(builder, "")
@@ -1528,7 +1606,7 @@ end
 local function render_breakpoints_panel()
 	local buf = ensure_buf(state.breakpoints, "UDebugToolBreakpoints", "udebugtool-debug-breakpoints")
 	local builder = new_builder()
-	push_line(builder, "Breakpoints", { group = "UDebugToolTitle" })
+	push_panel_header(builder, "Breakpoints")
 	push_line(builder, state.breakpoints_muted and "Muted" or "Enabled", {
 		group = state.breakpoints_muted and "UDebugToolDanger" or "UDebugToolAccent",
 	})
@@ -1567,7 +1645,7 @@ end
 local function render_stacks_panel(session)
 	local buf = ensure_buf(state.stacks, "UDebugToolStacks", "udebugtool-debug-stacks")
 	local builder = new_builder()
-	push_line(builder, "Stacks", { group = "UDebugToolTitle" })
+	push_panel_header(builder, "Stacks")
 	if not session then
 		push_line(builder, "")
 		push_line(builder, "No active session", { group = "UDebugToolMuted" })
@@ -1643,7 +1721,7 @@ end
 local function render_watches_panel(session)
 	local buf = ensure_buf(state.watches_panel, "UDebugToolWatches", "udebugtool-debug-watches")
 	local builder = new_builder()
-	push_line(builder, "Watches", { group = "UDebugToolTitle" })
+	push_panel_header(builder, "Watches")
 	push_line(builder, "[a] add   [x] remove", { group = "UDebugToolMuted" })
 	push_line(builder, "")
 	if vim.tbl_isempty(state.watches) then
@@ -1713,7 +1791,7 @@ end
 local function render_controls_panel(session)
 	local buf = ensure_buf(state.controls, "UDebugToolControls", "udebugtool-debug-controls")
 	local builder = new_builder()
-	push_line(builder, "Controls", { group = "UDebugToolTitle" })
+	push_panel_header(builder, "Controls")
 	local summary
 	if not session then
 		summary = "Idle"
@@ -1754,10 +1832,10 @@ local function render_controls_panel(session)
 	vim.bo[buf].modifiable = false
 end
 
-local function render_console_panel()
+render_console_panel = function()
 	local buf = ensure_buf(state.console, "UDebugToolConsole", "udebugtool-debug-console")
 	local builder = new_builder()
-	push_line(builder, "Console", { group = "UDebugToolTitle" })
+	push_panel_header(builder, state.console_title or "Logs")
 	if vim.tbl_isempty(state.console_lines) then
 		push_line(builder, "")
 		push_line(builder, "No output yet", { group = "UDebugToolMuted" })
@@ -1781,6 +1859,7 @@ local function render_all(session)
 	render_watches_panel(session)
 	render_controls_panel(session)
 	render_console_panel()
+	append_layout_log("render_all")
 end
 
 local function jump_to_breakpoint(path, line)
@@ -1877,13 +1956,15 @@ end
 function M.open()
 	setup_highlights()
 	sync_watches()
-	close_win(state.left.win)
+	state.console_title = "Console"
+	local panel = shared_output_panel()
+	if panel and type(panel.hide) == "function" then
+		panel.hide()
+	end
+	clear_debug_grid()
 	close_win(state.right.win)
-	close_win(state.bottom.win)
 	close_win(state.toolbar.win)
-	state.left.win = nil
 	state.right.win = nil
-	state.bottom.win = nil
 	state.toolbar.win = nil
 	ensure_sidebar_layout()
 	ensure_tray_layout()
@@ -1943,16 +2024,11 @@ end
 
 function M.close()
 	close_hover()
-	close_win(state.left.win)
+	clear_debug_grid()
 	close_win(state.right.win)
-	close_win(state.bottom.win)
-	close_win(state.scopes.win)
-	close_win(state.breakpoints.win)
-	close_win(state.stacks.win)
-	close_win(state.watches_panel.win)
-	close_win(state.controls.win)
-	close_win(state.console.win)
 	close_win(state.toolbar.win)
+	state.left.win = nil
+	state.bottom.win = nil
 	state.scopes.win = nil
 	state.breakpoints.win = nil
 	state.stacks.win = nil
@@ -2179,6 +2255,7 @@ end
 
 function M.reset()
 	M.close()
+	state.output_listener = nil
 	state.session = nil
 	state.running = false
 	state.stop_event = nil
