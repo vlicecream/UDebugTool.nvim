@@ -191,8 +191,8 @@ local function ui_layout()
 	local output_panel = shared_output_panel()
 	local output_offset = output_panel and output_panel.is_open and output_panel.is_open() and 13 or 0
 	local usable_rows = math.max(12, rows - output_offset - 2)
-	local cell_width = math.max(24, math.floor((cols - 2) / 3))
-	local cell_height = math.max(6, math.floor((usable_rows - 3) / 4))
+	local cell_width = math.max(24, math.floor((cols + 2) / 3))
+	local cell_height = math.max(6, math.floor((usable_rows + 3) / 4))
 	return {
 		sidebar_width = cell_width,
 		locals_height = tonumber(ui.locals_height) or 0.333,
@@ -552,13 +552,15 @@ local function rebuild_debug_grid()
 
 	local width = layout.sidebar_width
 	local height = layout.tray_height
+	local col_step = math.max(1, width - 1)
+	local row_step = math.max(1, height - 1)
 
 	ensure_panel_slot(state.scopes, scopes_buf, "scopes", 0, 0, layout, { cursorline = true })
-	ensure_panel_slot(state.breakpoints, breakpoints_buf, "breakpoints", height, 0, layout, { cursorline = true })
-	ensure_panel_slot(state.stacks, stacks_buf, "stacks", height * 2, 0, layout, { cursorline = true })
-	ensure_panel_slot(state.watches_panel, watches_buf, "watches_panel", height * 3, 0, layout, { cursorline = true })
-	ensure_panel_slot(state.controls, controls_buf, "controls", height * 3, width, layout, { cursorline = false, wrap = false })
-	ensure_panel_slot(state.console, console_buf, "console", height * 3, width * 2, layout, { cursorline = false, wrap = true })
+	ensure_panel_slot(state.breakpoints, breakpoints_buf, "breakpoints", row_step, 0, layout, { cursorline = true })
+	ensure_panel_slot(state.stacks, stacks_buf, "stacks", row_step * 2, 0, layout, { cursorline = true })
+	ensure_panel_slot(state.watches_panel, watches_buf, "watches_panel", row_step * 3, 0, layout, { cursorline = true })
+	ensure_panel_slot(state.controls, controls_buf, "controls", row_step * 3, col_step, layout, { cursorline = false, wrap = false })
+	ensure_panel_slot(state.console, console_buf, "console", row_step * 3, col_step * 2, layout, { cursorline = false, wrap = true })
 
 	append_layout_log("rebuild_debug_grid")
 end
