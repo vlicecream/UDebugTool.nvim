@@ -15,6 +15,8 @@ local state = {
 	stacks = { win = nil, buf = nil, items = {} },
 	watches_panel = { win = nil, buf = nil, items = {} },
 	controls = { win = nil, buf = nil, items = {} },
+	console_frame = { win = nil, buf = nil, items = {} },
+	console_tabs = { win = nil, buf = nil, items = {} },
 	console = { win = nil, buf = nil, items = {} },
 	toolbar = { win = nil, buf = nil, items = {} },
 	hover = { win = nil, buf = nil },
@@ -32,7 +34,6 @@ local state = {
 	console_lines = {},
 	console_groups = {},
 	console_title = "Console",
-	output_listener = nil,
 }
 
 local truncate
@@ -43,6 +44,15 @@ local function shared_output_panel()
 		return panel
 	end
 	return nil
+end
+
+local function debug_console_output_key()
+	return "workspace:debug-console"
+end
+
+local function output_embedded_here()
+	local panel = shared_output_panel()
+	return panel and type(panel.host_name) == "function" and panel.host_name() == "udebugtool"
 end
 
 local function normalize(path)
@@ -81,6 +91,8 @@ local function append_layout_log(tag)
 		{ name = "stacks", win = state.stacks.win },
 		{ name = "watches", win = state.watches_panel.win },
 		{ name = "controls", win = state.controls.win },
+		{ name = "console_frame", win = state.console_frame.win },
+		{ name = "console_tabs", win = state.console_tabs.win },
 		{ name = "console", win = state.console.win },
 	}
 
@@ -131,6 +143,8 @@ local function is_ui_win(win)
 		or win == state.stacks.win
 		or win == state.watches_panel.win
 		or win == state.controls.win
+		or win == state.console_frame.win
+		or win == state.console_tabs.win
 		or win == state.console.win
 		or win == state.toolbar.win
 end
@@ -502,6 +516,8 @@ local function clear_debug_grid()
 		state.stacks,
 		state.watches_panel,
 		state.controls,
+		state.console_frame,
+		state.console_tabs,
 		state.console,
 	}) do
 		close_win(slot.win)
@@ -540,6 +556,54 @@ local function ensure_panel_slot(slot, buf, keymap_name, row, col, layout, opts)
 	return ensure_float_slot(slot, buf, keymap_name, row, col, content_width, content_height, opts)
 end
 
+local function inner_win_config(row, col, width, height, focusable)
+	return {
+		relative = "editor",
+		row = row,
+		col = col,
+		width = width,
+		height = height,
+		style = "minimal",
+		border = "none",
+		focusable = focusable == true,
+		zindex = 71,
+		noautocmd = true,
+	}
+end
+
+local function ensure_inner_slot(slot, buf, row, col, width, height, opts)
+	opts = opts or {}
+	local win_config = inner_win_config(row, col, width, height, opts.focusable)
+	local win = slot.win
+	if valid_win(win) then
+		local ok, cfg = pcall(vim.api.nvim_win_get_config, win)
+		if not ok or not cfg or cfg.relative == "" then
+			close_win(win)
+			win = nil
+			slot.win = nil
+		end
+	end
+
+	if not valid_win(win) then
+		win = vim.api.nvim_open_win(buf, false, win_config)
+		slot.win = win
+	else
+		pcall(vim.api.nvim_win_set_config, win, win_config)
+		if vim.api.nvim_win_get_buf(win) ~= buf then
+			vim.api.nvim_win_set_buf(win, buf)
+		end
+	end
+
+	setup_window(win, {
+		cursorline = opts.cursorline == true,
+		winfixwidth = true,
+		winfixheight = true,
+		wrap = opts.wrap == true,
+		float = true,
+	})
+	return win, buf
+end
+
 local function rebuild_debug_grid()
 	ensure_docked_containers()
 	local layout = ui_layout()
@@ -548,19 +612,40 @@ local function rebuild_debug_grid()
 	local stacks_buf = ensure_buf(state.stacks, "UDebugToolStacks", "udebugtool-debug-stacks")
 	local watches_buf = ensure_buf(state.watches_panel, "UDebugToolWatches", "udebugtool-debug-watches")
 	local controls_buf = ensure_buf(state.controls, "UDebugToolControls", "udebugtool-debug-controls")
+	local console_frame_buf = ensure_buf(state.console_frame, "UDebugToolOutputFrame", "udebugtool-debug-output-frame")
+	local console_tabs_buf = ensure_buf(state.console_tabs, "UDebugToolOutputTabs", "udebugtool-debug-output-tabs")
 	local console_buf = ensure_buf(state.console, "UDebugToolConsole", "udebugtool-debug-console")
 
 	local width = layout.sidebar_width
 	local height = layout.tray_height
 	local col_step = math.max(1, width - 1)
 	local row_step = math.max(1, height - 1)
+	local console_row = row_step * 3
+	local console_col = col_step * 2
+	local inner_width = math.max(12, width - 2)
+	local inner_height = math.max(2, height - 2)
 
 	ensure_panel_slot(state.scopes, scopes_buf, "scopes", 0, 0, layout, { cursorline = true })
 	ensure_panel_slot(state.breakpoints, breakpoints_buf, "breakpoints", row_step, 0, layout, { cursorline = true })
 	ensure_panel_slot(state.stacks, stacks_buf, "stacks", row_step * 2, 0, layout, { cursorline = true })
 	ensure_panel_slot(state.watches_panel, watches_buf, "watches_panel", row_step * 3, 0, layout, { cursorline = true })
 	ensure_panel_slot(state.controls, controls_buf, "controls", row_step * 3, col_step, layout, { cursorline = false, wrap = false })
-	ensure_panel_slot(state.console, console_buf, "console", row_step * 3, col_step * 2, layout, { cursorline = false, wrap = true })
+	ensure_panel_slot(state.console_frame, console_frame_buf, "console", console_row, console_col, layout, { cursorline = false, wrap = true })
+	ensure_inner_slot(state.console_tabs, console_tabs_buf, console_row + 1, console_col + 1, inner_width, 1, {
+		cursorline = false,
+		wrap = false,
+		focusable = true,
+	})
+	ensure_inner_slot(state.console, console_buf, console_row + 2, console_col + 1, inner_width, math.max(1, inner_height - 1), {
+		cursorline = false,
+		wrap = false,
+		focusable = true,
+	})
+
+	local panel = shared_output_panel()
+	if panel and type(panel.attach_host_windows) == "function" then
+		panel.attach_host_windows("udebugtool", state.console_tabs.win, state.console.win)
+	end
 
 	append_layout_log("rebuild_debug_grid")
 end
@@ -571,6 +656,8 @@ local function grid_ready()
 		and valid_win(state.stacks.win)
 		and valid_win(state.watches_panel.win)
 		and valid_win(state.controls.win)
+		and valid_win(state.console_frame.win)
+		and valid_win(state.console_tabs.win)
 		and valid_win(state.console.win)
 end
 
@@ -717,6 +804,30 @@ local function console_highlight_group(text, explicit)
 		return "UDebugToolCurrentStop"
 	end
 	return "UDebugToolValue"
+end
+
+local function output_console_group(text, explicit)
+	if explicit == "UDebugToolDanger" then
+		return "UCoreOutputError"
+	end
+	if explicit == "UDebugToolWarn" or explicit == "UDebugToolCurrentStop" then
+		return "UCoreOutputWarning"
+	end
+	if explicit == "UDebugToolValue" or explicit == "UDebugToolAccent" then
+		return "UCoreOutputInfo"
+	end
+
+	local lower = tostring(text or ""):lower()
+	if lower:find("fatal error", 1, true)
+		or lower:find(" error:", 1, true)
+		or lower:find("exception", 1, true)
+	then
+		return "UCoreOutputError"
+	end
+	if lower:find(" warning:", 1, true) or lower:find(": warning ", 1, true) then
+		return "UCoreOutputWarning"
+	end
+	return "UCoreOutputInfo"
 end
 
 truncate = function(text, max_len)
@@ -1835,6 +1946,9 @@ local function render_controls_panel(session)
 end
 
 render_console_panel = function()
+	if output_embedded_here() then
+		return
+	end
 	local buf = ensure_buf(state.console, "UDebugToolConsole", "udebugtool-debug-console")
 	local builder = new_builder()
 	push_panel_header(builder, state.console_title or "Logs")
@@ -1959,10 +2073,6 @@ function M.open()
 	setup_highlights()
 	sync_watches()
 	state.console_title = "Console"
-	local panel = shared_output_panel()
-	if panel and type(panel.hide) == "function" then
-		panel.hide()
-	end
 	clear_debug_grid()
 	close_win(state.right.win)
 	close_win(state.toolbar.win)
@@ -2026,6 +2136,10 @@ end
 
 function M.close()
 	close_hover()
+	local panel = shared_output_panel()
+	if panel and type(panel.detach_host) == "function" then
+		panel.detach_host("udebugtool")
+	end
 	clear_debug_grid()
 	close_win(state.right.win)
 	close_win(state.toolbar.win)
@@ -2036,6 +2150,8 @@ function M.close()
 	state.stacks.win = nil
 	state.watches_panel.win = nil
 	state.controls.win = nil
+	state.console_frame.win = nil
+	state.console_tabs.win = nil
 	state.console.win = nil
 	state.toolbar.win = nil
 	state.scopes.buf = nil
@@ -2043,6 +2159,8 @@ function M.close()
 	state.stacks.buf = nil
 	state.watches_panel.buf = nil
 	state.controls.buf = nil
+	state.console_frame.buf = nil
+	state.console_tabs.buf = nil
 	state.console.buf = nil
 	state.toolbar.buf = nil
 	state.scopes.items = {}
@@ -2050,6 +2168,8 @@ function M.close()
 	state.stacks.items = {}
 	state.watches_panel.items = {}
 	state.controls.items = {}
+	state.console_frame.items = {}
+	state.console_tabs.items = {}
 	state.console.items = {}
 	state.toolbar.items = {}
 end
@@ -2224,6 +2344,16 @@ end
 function M.clear_console()
 	state.console_lines = {}
 	state.console_groups = {}
+	local panel = shared_output_panel()
+	if panel and type(panel.replace) == "function" then
+		panel.replace(debug_console_output_key(), {}, {
+			title = "Debug Console",
+			kind = "debug",
+			focus = false,
+			open = false,
+			status = "running",
+		})
+	end
 	if M.is_open() then
 		render_console_panel()
 	end
@@ -2232,11 +2362,16 @@ end
 function M.append_console(data, opts)
 	opts = opts or {}
 	local lines = type(data) == "table" and data or { tostring(data or "") }
+	local output_lines = {}
+	local output_groups = {}
 	for _, line in ipairs(lines) do
 		local text = tostring(line or "")
 		if text ~= "" then
+			local group = console_highlight_group(text, opts.group)
 			state.console_lines[#state.console_lines + 1] = text
-			state.console_groups[#state.console_groups + 1] = console_highlight_group(text, opts.group)
+			state.console_groups[#state.console_groups + 1] = group
+			output_lines[#output_lines + 1] = text
+			output_groups[#output_groups + 1] = output_console_group(text, opts.group)
 		end
 	end
 
@@ -2244,6 +2379,18 @@ function M.append_console(data, opts)
 	while #state.console_lines > max_lines do
 		table.remove(state.console_lines, 1)
 		table.remove(state.console_groups, 1)
+	end
+
+	local panel = shared_output_panel()
+	if panel and #output_lines > 0 and type(panel.append) == "function" then
+		panel.append(debug_console_output_key(), output_lines, {
+			title = "Debug Console",
+			kind = "debug",
+			focus = false,
+			open = false,
+			status = "running",
+			line_groups = output_groups,
+		})
 	end
 
 	if M.is_open() then
@@ -2257,7 +2404,6 @@ end
 
 function M.reset()
 	M.close()
-	state.output_listener = nil
 	state.session = nil
 	state.running = false
 	state.stop_event = nil
