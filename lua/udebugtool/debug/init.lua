@@ -322,9 +322,10 @@ render_stack_tab = function(session, opts)
 	local actions = {}
 
 	local function add(text, group, action)
-		lines[#lines + 1] = tostring(text or "")
-		groups[#groups + 1] = group or "UCoreOutputInfo"
-		actions[#actions + 1] = action
+		local line_index = #lines + 1
+		lines[line_index] = tostring(text or "")
+		groups[line_index] = group or "UCoreOutputInfo"
+		actions[line_index] = action
 	end
 
 	add("Debug Stack", "UCoreOutputTitle")
