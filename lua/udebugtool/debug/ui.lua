@@ -5,6 +5,8 @@ local M = {}
 local render_console_panel
 
 local ns = vim.api.nvim_create_namespace("udebugtool_debug_ui")
+local PANEL_PADDING = 2
+local GRID_BORDER_OVERLAP = 1
 
 local state = {
 	left = { win = nil, buf = nil, items = {} },
@@ -556,6 +558,21 @@ local function ensure_panel_slot(slot, buf, keymap_name, row, col, layout, opts)
 	return ensure_float_slot(slot, buf, keymap_name, row, col, content_width, content_height, opts)
 end
 
+local function grid_cell_geometry(layout)
+	local outer_width = math.max(14, layout.sidebar_width)
+	local outer_height = math.max(4, layout.tray_height)
+	local content_width = math.max(12, outer_width - 2)
+	local content_height = math.max(2, outer_height - 2)
+	return {
+		outer_width = outer_width,
+		outer_height = outer_height,
+		content_width = content_width,
+		content_height = content_height,
+		col_step = math.max(1, outer_width - GRID_BORDER_OVERLAP),
+		row_step = math.max(1, outer_height - GRID_BORDER_OVERLAP),
+	}
+end
+
 local function inner_win_config(row, col, width, height, focusable)
 	return {
 		relative = "editor",
@@ -607,6 +624,7 @@ end
 local function rebuild_debug_grid()
 	ensure_docked_containers()
 	local layout = ui_layout()
+	local cell = grid_cell_geometry(layout)
 	local scopes_buf = ensure_buf(state.scopes, "UDebugToolLocals", "udebugtool-debug-locals")
 	local breakpoints_buf = ensure_buf(state.breakpoints, "UDebugToolBreakpoints", "udebugtool-debug-breakpoints")
 	local stacks_buf = ensure_buf(state.stacks, "UDebugToolStacks", "udebugtool-debug-stacks")
@@ -616,27 +634,21 @@ local function rebuild_debug_grid()
 	local console_tabs_buf = ensure_buf(state.console_tabs, "UDebugToolOutputTabs", "udebugtool-debug-output-tabs")
 	local console_buf = ensure_buf(state.console, "UDebugToolConsole", "udebugtool-debug-console")
 
-	local width = layout.sidebar_width
-	local height = layout.tray_height
-	local col_step = math.max(1, width - 1)
-	local row_step = math.max(1, height - 1)
-	local console_row = row_step * 3
-	local console_col = col_step * 2
-	local inner_width = math.max(12, width - 2)
-	local inner_height = math.max(2, height - 2)
+	local console_row = cell.row_step * 3
+	local console_col = cell.col_step * 2
 
-	ensure_panel_slot(state.scopes, scopes_buf, "scopes", 0, 0, layout, { cursorline = true })
-	ensure_panel_slot(state.breakpoints, breakpoints_buf, "breakpoints", row_step, 0, layout, { cursorline = true })
-	ensure_panel_slot(state.stacks, stacks_buf, "stacks", row_step * 2, 0, layout, { cursorline = true })
-	ensure_panel_slot(state.watches_panel, watches_buf, "watches_panel", row_step * 3, 0, layout, { cursorline = true })
-	ensure_panel_slot(state.controls, controls_buf, "controls", row_step * 3, col_step, layout, { cursorline = false, wrap = false })
-	ensure_panel_slot(state.console_frame, console_frame_buf, "console", console_row, console_col, layout, { cursorline = false, wrap = true })
-	ensure_inner_slot(state.console_tabs, console_tabs_buf, console_row + 1, console_col + 1, inner_width, 1, {
+	ensure_float_slot(state.scopes, scopes_buf, "scopes", 0, 0, cell.content_width, cell.content_height, { cursorline = true })
+	ensure_float_slot(state.breakpoints, breakpoints_buf, "breakpoints", cell.row_step, 0, cell.content_width, cell.content_height, { cursorline = true })
+	ensure_float_slot(state.stacks, stacks_buf, "stacks", cell.row_step * 2, 0, cell.content_width, cell.content_height, { cursorline = true })
+	ensure_float_slot(state.watches_panel, watches_buf, "watches_panel", cell.row_step * 3, 0, cell.content_width, cell.content_height, { cursorline = true })
+	ensure_float_slot(state.controls, controls_buf, "controls", cell.row_step * 3, cell.col_step, cell.content_width, cell.content_height, { cursorline = false, wrap = false })
+	ensure_float_slot(state.console_frame, console_frame_buf, "console", console_row, console_col, cell.content_width, cell.content_height, { cursorline = false, wrap = true })
+	ensure_inner_slot(state.console_tabs, console_tabs_buf, console_row + 1, console_col + 1, cell.content_width, 1, {
 		cursorline = false,
 		wrap = false,
 		focusable = true,
 	})
-	ensure_inner_slot(state.console, console_buf, console_row + 2, console_col + 1, inner_width, math.max(1, inner_height - 1), {
+	ensure_inner_slot(state.console, console_buf, console_row + 2, console_col + 1, cell.content_width, math.max(1, cell.content_height - 1), {
 		cursorline = false,
 		wrap = false,
 		focusable = true,
@@ -699,8 +711,8 @@ local function set_lines(slot, lines, items, highlights)
 			end
 			if target_row then
 				pcall(vim.api.nvim_win_set_cursor, slot.win, { target_row, 0 })
-			elseif #lines > 1 then
-				pcall(vim.api.nvim_win_set_cursor, slot.win, { 2, 0 })
+			elseif #lines > 0 then
+				pcall(vim.api.nvim_win_set_cursor, slot.win, { 1, 0 })
 			end
 		end
 	end
@@ -716,17 +728,17 @@ local function add_hl(highlights, group, line, start_col, end_col)
 end
 
 local function setup_highlights()
-	vim.api.nvim_set_hl(0, "UDebugToolTitle", { fg = "#E5EFFF", bold = true })
-	vim.api.nvim_set_hl(0, "UDebugToolSection", { fg = "#93C5FD", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolTitle", { fg = "#D8E5FF", bold = false })
+	vim.api.nvim_set_hl(0, "UDebugToolSection", { fg = "#93C5FD", bold = false })
 	vim.api.nvim_set_hl(0, "UDebugToolLabel", { fg = "#7C8FB8" })
 	vim.api.nvim_set_hl(0, "UDebugToolValue", { fg = "#DBE7FF" })
 	vim.api.nvim_set_hl(0, "UDebugToolAccent", { fg = "#86EFAC" })
 	vim.api.nvim_set_hl(0, "UDebugToolMuted", { fg = "#64748B" })
 	vim.api.nvim_set_hl(0, "UDebugToolMarker", { fg = "#FBBF24" })
-	vim.api.nvim_set_hl(0, "UDebugToolCurrent", { fg = "#38BDF8", bold = true })
-	vim.api.nvim_set_hl(0, "UDebugToolCurrentStop", { fg = "#FBBF24", bold = true })
-	vim.api.nvim_set_hl(0, "UDebugToolWarn", { fg = "#FBBF24", bold = true })
-	vim.api.nvim_set_hl(0, "UDebugToolDanger", { fg = "#F87171", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolCurrent", { fg = "#38BDF8", bold = false })
+	vim.api.nvim_set_hl(0, "UDebugToolCurrentStop", { fg = "#FBBF24", bold = false })
+	vim.api.nvim_set_hl(0, "UDebugToolWarn", { fg = "#FBBF24", bold = false })
+	vim.api.nvim_set_hl(0, "UDebugToolDanger", { fg = "#F87171", bold = false })
 	vim.api.nvim_set_hl(0, "UDebugToolToolbarKey", { fg = "#E5EFFF", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolToolbarHot", { fg = "#4FC1FF", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolBorder", { fg = "#3F3F46" })
@@ -1181,7 +1193,13 @@ end
 
 local function push_line(builder, text, opts)
 	opts = opts or {}
-	table.insert(builder.lines, text)
+	local padding = opts.padding
+	if padding == nil then
+		padding = PANEL_PADDING
+	end
+	local prefix = padding > 0 and string.rep(" ", padding) or ""
+	local padded_text = prefix .. tostring(text or "")
+	table.insert(builder.lines, padded_text)
 	local row = #builder.lines
 	if opts.item then
 		builder.items[row] = opts.item
@@ -1190,13 +1208,18 @@ local function push_line(builder, text, opts)
 		add_hl(builder.highlights, opts.group, row - 1, 0, -1)
 	end
 	for _, span in ipairs(opts.spans or {}) do
-		add_hl(builder.highlights, span.group, row - 1, span.start_col or 0, span.end_col or -1)
+		local start_col = (span.start_col or 0) + padding
+		local end_col = span.end_col or -1
+		if end_col >= 0 then
+			end_col = end_col + padding
+		end
+		add_hl(builder.highlights, span.group, row - 1, start_col, end_col)
 	end
 	return row
 end
 
 local function push_panel_header(builder, title)
-	push_line(builder, " " .. tostring(title), { group = "UDebugToolTitle" })
+	push_line(builder, tostring(title), { group = "UDebugToolTitle", padding = PANEL_PADDING })
 end
 
 local function render_variable_tree(builder, session, entry, depth, item_kind, item_payload)
