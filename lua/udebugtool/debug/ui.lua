@@ -3,6 +3,8 @@ local project = require("udebugtool.project")
 
 local M = {}
 local render_console_panel
+local render_all
+local ensure_layout_autocmds
 
 local ns = vim.api.nvim_create_namespace("udebugtool_debug_ui")
 local PANEL_PADDING = 2
@@ -37,6 +39,8 @@ local state = {
 	console_lines = {},
 	console_groups = {},
 	console_title = "Console",
+	layout_signature = nil,
+	layout_refresh_pending = false,
 }
 
 local truncate
@@ -243,6 +247,17 @@ local function ui_layout()
 		output_offset = output_offset,
 		persist_watches = ui.persist_watches ~= false,
 	}
+end
+
+local function current_layout_signature()
+	local layout = ui_layout()
+	return table.concat({
+		tostring(vim.o.columns),
+		tostring(vim.o.lines),
+		tostring(vim.o.cmdheight),
+		tostring(layout.output_offset),
+		tostring(vim.api.nvim_get_current_tabpage()),
+	}, ":")
 end
 
 local function ensure_buf(slot, name, filetype)
@@ -775,6 +790,53 @@ end
 local function ensure_tray_layout()
 	rebuild_debug_grid()
 	append_layout_log("ensure_tray_layout")
+end
+
+local function rebuild_layout_if_needed(force)
+	if not M.is_open() then
+		state.layout_signature = current_layout_signature()
+		return
+	end
+
+	local signature = current_layout_signature()
+	if force ~= true and state.layout_signature == signature and grid_ready() then
+		return
+	end
+
+	close_hover()
+	clear_debug_grid()
+	ensure_sidebar_layout()
+	ensure_tray_layout()
+	refresh_cursorlines()
+	render_all(state.session)
+	state.layout_signature = current_layout_signature()
+end
+
+local function schedule_layout_refresh(force)
+	if state.layout_refresh_pending then
+		return
+	end
+
+	state.layout_refresh_pending = true
+	vim.schedule(function()
+		state.layout_refresh_pending = false
+		rebuild_layout_if_needed(force)
+	end)
+end
+
+ensure_layout_autocmds = function()
+	if state.layout_augroup then
+		return
+	end
+
+	local group = vim.api.nvim_create_augroup("UDebugToolLayout", { clear = true })
+	state.layout_augroup = group
+	vim.api.nvim_create_autocmd({ "VimResized", "WinResized", "FocusGained", "TabEnter" }, {
+		group = group,
+		callback = function()
+			schedule_layout_refresh(false)
+		end,
+	})
 end
 
 local function set_lines(slot, lines, items, highlights)
@@ -2156,7 +2218,7 @@ render_console_panel = function()
 	vim.bo[buf].modifiable = false
 end
 
-local function render_all(session)
+render_all = function(session)
 	ensure_sidebar_layout()
 	ensure_tray_layout()
 	render_scopes_panel(session)
@@ -2166,6 +2228,7 @@ local function render_all(session)
 	render_controls_panel(session)
 	render_console_panel()
 	append_layout_log("render_all")
+	state.layout_signature = current_layout_signature()
 end
 
 local function jump_to_breakpoint(path, line)
@@ -2282,6 +2345,7 @@ end
 function M.open()
 	setup_highlights()
 	ensure_cursorline_autocmds()
+	ensure_layout_autocmds()
 	sync_watches()
 	state.console_title = "Console"
 	clear_debug_grid()
@@ -2292,6 +2356,7 @@ function M.open()
 	ensure_sidebar_layout()
 	ensure_tray_layout()
 	refresh_cursorlines()
+	state.layout_signature = current_layout_signature()
 end
 
 function M.hover_under_cursor()
@@ -2384,6 +2449,8 @@ function M.close()
 	state.console_tabs.items = {}
 	state.console.items = {}
 	state.toolbar.items = {}
+	state.layout_signature = nil
+	state.layout_refresh_pending = false
 end
 
 function M.is_open()
