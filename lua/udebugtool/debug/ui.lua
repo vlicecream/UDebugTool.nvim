@@ -953,6 +953,10 @@ truncate = function(text, max_len)
 	return text:sub(1, math.max(0, max_len - 3)) .. "..."
 end
 
+local function lower(text)
+	return tostring(text or ""):lower()
+end
+
 local function watch_store_path(root)
 	if not root then
 		return nil
@@ -1067,7 +1071,26 @@ local function sorted_thread_ids(session)
 	for id, _ in pairs(session and session.threads or {}) do
 		table.insert(ids, id)
 	end
-	table.sort(ids)
+	table.sort(ids, function(a, b)
+		local function rank(thread_id)
+			local thread = session and session.threads and session.threads[thread_id] or {}
+			local name = lower(thread.name or "")
+			if name:find("gamethread", 1, true) then
+				return 0
+			end
+			if name:find("mainthread", 1, true) then
+				return 1
+			end
+			return 2
+		end
+
+		local ra = rank(a)
+		local rb = rank(b)
+		if ra ~= rb then
+			return ra < rb
+		end
+		return a < b
+	end)
 	return ids
 end
 
@@ -1342,6 +1365,7 @@ local function render_variable_tree(builder, session, entry, depth, item_kind, i
 	end
 
 	push_line(builder, text, {
+		padding = 2,
 		item = item_kind and vim.tbl_extend("force", {
 			kind = item_kind,
 			key = key,
@@ -1787,7 +1811,6 @@ end
 local function render_scopes_panel(session)
 	local buf = ensure_buf(state.scopes, "UDebugToolLocals", "udebugtool-debug-locals")
 	local builder = new_builder()
-	push_panel_header(builder, "Locals")
 
 	if not session then
 		push_line(builder, "No active session", { group = "UDebugToolMuted" })
@@ -1797,17 +1820,17 @@ local function render_scopes_panel(session)
 	end
 
 	if state.running or not session.current_frame then
-		push_line(builder, "Program is running", { group = "UDebugToolAccent" })
 		set_lines(state.scopes, builder.lines, builder.items, builder.highlights)
 		vim.bo[buf].modifiable = false
 		return
 	end
 
-	push_line(builder, frame_location(session.current_frame), { group = "UDebugToolMuted" })
-	push_line(builder, "")
 	local scopes = session.current_frame.scopes or {}
 	if vim.tbl_isempty(scopes) then
-		push_line(builder, "Loading scopes...", { group = "UDebugToolMuted" })
+		push_line(builder, "Loading scopes...", {
+			group = "UDebugToolMuted",
+			padding = 1,
+		})
 	else
 		for _, scope in ipairs(scopes) do
 			local scope_name = tostring(scope.name or "Scope")
@@ -1819,6 +1842,7 @@ local function render_scopes_panel(session)
 			local prefix = expanded and "▾" or "▸"
 			push_line(builder, string.format("%s %s", prefix, scope_name), {
 				group = "UDebugToolSection",
+				padding = 1,
 				item = {
 					kind = "scope",
 					key = scope_key,
@@ -1843,32 +1867,67 @@ end
 local function render_breakpoints_panel()
 	local buf = ensure_buf(state.breakpoints, "UDebugToolBreakpoints", "udebugtool-debug-breakpoints")
 	local builder = new_builder()
-	push_line(builder, state.breakpoints_muted and "Muted" or "Enabled", {
-		group = state.breakpoints_muted and "UDebugToolDanger" or "UDebugToolAccent",
-	})
-	push_line(builder, "")
 	local breakpoints = sorted_breakpoints()
 	if vim.tbl_isempty(breakpoints) then
 		push_line(builder, "No breakpoints", { group = "UDebugToolMuted" })
 	else
+		local grouped = {}
+		local ordered_paths = {}
 		for _, bp in ipairs(breakpoints) do
-			local filename = file_name(bp.path)
-			local item = {
-				kind = "breakpoint",
-				path = bp.path,
-				line = bp.line,
-				name = filename,
-				value = tostring(bp.line),
-			}
-			push_line(builder, filename, {
+			local path = bp.path or ""
+			if not grouped[path] then
+				grouped[path] = {}
+				table.insert(ordered_paths, path)
+			end
+			table.insert(grouped[path], bp)
+		end
+
+		for group_index, path in ipairs(ordered_paths) do
+			local items = grouped[path] or {}
+			local filename = file_name(path)
+			local first = items[1]
+			local key = "breakpoint_group:" .. tostring(path)
+			local expanded = state.expanded[key]
+			if expanded == nil then
+				expanded = true
+			end
+			local prefix = expanded and "▾" or "▸"
+			push_line(builder, string.format("%s %s", prefix, filename), {
 				group = "UDebugToolMarker",
-				item = item,
+				item = {
+					kind = "breakpoint_group",
+					key = key,
+					path = path,
+					line = first and first.line or 1,
+					name = filename,
+				},
+				padding = 1,
 			})
-			push_line(builder, string.format("  Line %d", tonumber(bp.line or 0) or 0), {
-				group = "UDebugToolMuted",
-				item = item,
-			})
-			push_line(builder, "")
+
+			if expanded then
+				for _, bp in ipairs(items) do
+					local source_text = source_line_text(bp.path, bp.line) or ""
+					local text = string.format("%d", tonumber(bp.line or 0) or 0)
+					if source_text ~= "" then
+						text = text .. "  " .. truncate(source_text, 52)
+					end
+					push_line(builder, text, {
+						group = "UDebugToolMuted",
+						item = {
+							kind = "breakpoint",
+							path = bp.path,
+							line = bp.line,
+							name = filename,
+							value = source_text,
+						},
+						padding = 2,
+					})
+				end
+			end
+
+			if group_index < #ordered_paths then
+				push_line(builder, "", { padding = 0 })
+			end
 		end
 	end
 	set_lines(state.breakpoints, builder.lines, builder.items, builder.highlights)
@@ -1885,47 +1944,30 @@ local function render_stacks_panel(session)
 		return
 	end
 
-	local reason = stop_reason_text()
-	local thread_id = tonumber(session.stopped_thread_id or 0) or 0
-	local thread = thread_id > 0 and session.threads and session.threads[thread_id] or nil
-	if state.running then
-		push_line(builder, "State: Running", { group = "UDebugToolAccent" })
-	else
-		push_line(builder, "State: Stopped", { group = "UDebugToolWarn" })
-	end
-	if thread_id > 0 then
-		push_line(builder, "Thread: " .. tostring(thread and thread.name or thread_id), {
-			group = "UDebugToolSection",
-		})
-	end
-	if session.current_frame then
-		push_line(builder, "Frame: " .. tostring(session.current_frame.name or "<frame>"), {
-			group = "UDebugToolValue",
-		})
-		push_line(builder, "Location: " .. frame_location(session.current_frame), {
-			group = "UDebugToolMuted",
-		})
-	end
-	if reason then
-		push_line(builder, "Reason: " .. reason, { group = "UDebugToolWarn" })
-	end
-	push_line(builder, "")
-
 	local ids = sorted_thread_ids(session)
 	if vim.tbl_isempty(ids) then
-		push_line(builder, "Waiting for threads...", { group = "UDebugToolMuted" })
+		push_line(builder, "Waiting for threads...", {
+			group = "UDebugToolMuted",
+			padding = 1,
+		})
 	else
+		local default_thread_id = ids[1]
 		for _, thread_id in ipairs(ids) do
 			local thread = session.threads and session.threads[thread_id] or {}
 			local stopped = session.stopped_thread_id == thread_id
-			local expanded = thread_expanded(thread_id, stopped)
+			local key = "thread:" .. tostring(thread_id)
+			local expanded = state.expanded[key]
+			if expanded == nil then
+				expanded = stopped or thread_id == default_thread_id
+			end
 			local prefix = expanded and "▾" or "▸"
 			local label = tostring(thread.name or ("Thread " .. tostring(thread_id)))
 			push_line(builder, string.format("%s %s", prefix, label), {
 				group = stopped and "UDebugToolCurrentStop" or "UDebugToolSection",
+				padding = 1,
 				item = {
 					kind = "thread",
-					key = "thread:" .. tostring(thread_id),
+					key = key,
 					thread_id = thread_id,
 					name = label,
 				},
@@ -1933,7 +1975,10 @@ local function render_stacks_panel(session)
 			if expanded then
 				local frames = thread.frames or {}
 				if vim.tbl_isempty(frames) then
-					push_line(builder, "  loading...", { group = "UDebugToolMuted" })
+					push_line(builder, "loading...", {
+						group = "UDebugToolMuted",
+						padding = 2,
+					})
 				else
 					for index, frame in ipairs(frames) do
 						local current = session.current_frame and frame.id == session.current_frame.id
@@ -1944,18 +1989,19 @@ local function render_stacks_panel(session)
 							name = frame.name or "<frame>",
 							value = frame_location(frame),
 						}
-						push_line(builder, string.format("  %02d %s", index, tostring(frame.name or "<frame>")), {
+						push_line(builder, string.format("%02d %s", index, tostring(frame.name or "<frame>")), {
 							group = current and "UDebugToolCurrent" or "UDebugToolValue",
+							padding = 2,
 							item = item,
 						})
-						push_line(builder, "     " .. frame_location(frame), {
+						push_line(builder, frame_location(frame), {
 							group = current and "UDebugToolMarker" or "UDebugToolMuted",
+							padding = 3,
 							item = item,
 						})
 					end
 				end
 			end
-			push_line(builder, "")
 		end
 	end
 	set_lines(state.stacks, builder.lines, builder.items, builder.highlights)
@@ -1965,10 +2011,7 @@ end
 local function render_watches_panel(session)
 	local buf = ensure_buf(state.watches_panel, "UDebugToolWatches", "udebugtool-debug-watches")
 	local builder = new_builder()
-	push_line(builder, "[a] add   [x] remove", { group = "UDebugToolMuted" })
-	push_line(builder, "")
 	if vim.tbl_isempty(state.watches) then
-		push_line(builder, "No watches", { group = "UDebugToolMuted" })
 	else
 		for _, expression in ipairs(state.watches) do
 			local watch = state.watch_values[expression] or {}
@@ -2034,15 +2077,16 @@ end
 local function render_controls_panel(session)
 	local buf = ensure_buf(state.controls, "UDebugToolControls", "udebugtool-debug-controls")
 	local builder = new_builder()
-	push_line(builder, "            ", {
+	push_line(builder, "          ", {
 		group = "UDebugToolValue",
+		padding = 1,
 		spans = {
-			{ group = "UDebugToolAccent", start_col = 2, end_col = 3 },
-			{ group = "UDebugToolToolbarHot", start_col = 5, end_col = 6 },
-			{ group = "UDebugToolToolbarHot", start_col = 8, end_col = 9 },
-			{ group = "UDebugToolToolbarHot", start_col = 11, end_col = 12 },
-			{ group = "UDebugToolAccent", start_col = 14, end_col = 15 },
-			{ group = "UDebugToolDanger", start_col = 17, end_col = 18 },
+			{ group = "UDebugToolAccent", start_col = 1, end_col = 2 },
+			{ group = "UDebugToolToolbarHot", start_col = 4, end_col = 5 },
+			{ group = "UDebugToolToolbarHot", start_col = 7, end_col = 8 },
+			{ group = "UDebugToolToolbarHot", start_col = 10, end_col = 11 },
+			{ group = "UDebugToolAccent", start_col = 13, end_col = 14 },
+			{ group = "UDebugToolDanger", start_col = 16, end_col = 17 },
 		},
 	})
 	set_lines(state.controls, builder.lines, builder.items, builder.highlights)
@@ -2081,12 +2125,30 @@ local function render_all(session)
 end
 
 local function jump_to_breakpoint(path, line)
+	path = normalize(path or nil)
+	line = tonumber(line or 1) or 1
 	if not path or path == "" then
 		return
 	end
-	vim.cmd.edit(vim.fn.fnameescape(path))
-	pcall(vim.api.nvim_win_set_cursor, 0, { tonumber(line or 1), 0 })
-	vim.cmd("normal! zz")
+
+	local bufnr = vim.fn.bufnr(path)
+	if bufnr < 0 then
+		bufnr = vim.fn.bufadd(path)
+	end
+	if not bufnr or bufnr <= 0 then
+		return
+	end
+	if not vim.api.nvim_buf_is_loaded(bufnr) then
+		pcall(vim.fn.bufload, bufnr)
+	end
+
+	local win = find_source_window()
+	if valid_win(win) then
+		pcall(vim.api.nvim_set_current_win, win)
+		pcall(vim.api.nvim_win_set_buf, win, bufnr)
+		pcall(vim.api.nvim_win_set_cursor, win, { line, 0 })
+		pcall(vim.cmd, "normal! zvzz")
+	end
 end
 
 local function toggle_item(item)
@@ -2363,6 +2425,18 @@ function M.activate_current_item(slot_name)
 
 	if item.kind == "breakpoint" then
 		return jump_to_breakpoint(item.path, item.line)
+	end
+
+	if item.kind == "breakpoint_group" then
+		if item.key then
+			local expanded = state.expanded[item.key]
+			if expanded == nil then
+				expanded = true
+			end
+			state.expanded[item.key] = not expanded
+		end
+		render_all(state.session)
+		return
 	end
 
 	if item.kind == "watch" then

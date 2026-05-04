@@ -165,15 +165,7 @@ local function open_unreal_output(root, lines, opts)
 end
 
 local function ensure_debug_output(root, session)
-	local panel = shared_output_panel()
-	if not panel then
-		return
-	end
-
-	render_stack_tab(session, {
-		root = root,
-		focus = false,
-	})
+	return root, session
 end
 
 local function focus_unreal_output(root)
@@ -831,7 +823,6 @@ activate_stack_frame = function(session, thread_id, frame)
 
 	set_session_frame(session, thread_id, frame)
 	jump_to_frame(frame)
-	render_stack_tab(session, { focus = true })
 
 	local ok_ui, debug_ui = pcall(require, "udebugtool.debug.ui")
 	if ok_ui and debug_ui then
@@ -3502,7 +3493,6 @@ function M.setup()
 					title = "Unreal",
 					kind = "unreal",
 				})
-				render_stack_tab(dap.session(), { focus = false })
 				if root then
 					restore_project_breakpoints(root)
 				end
@@ -3535,7 +3525,6 @@ function M.setup()
 								jump_to_frame(frame)
 							end
 						end
-						render_stack_tab(session, { focus = true })
 						if auto_open_ui_enabled() or debug_ui.is_open() then
 							debug_ui.refresh(session)
 						end
@@ -3543,7 +3532,6 @@ function M.setup()
 				end)
 			end
 			dap.listeners.after.event_continued.udebugtool = function()
-				render_stack_tab(dap.session(), { focus = false })
 				focus_unreal_output(active_root())
 				local debug_ui = require("udebugtool.debug.ui")
 				if auto_open_ui_enabled() or debug_ui.is_open() then
@@ -3561,7 +3549,6 @@ function M.setup()
 					title = "Unreal",
 					kind = "unreal",
 				})
-				render_stack_tab(nil, { focus = false })
 				pcall(function()
 					require("udebugtool.debug.ui").set_stop_event(nil)
 				end)
@@ -3580,7 +3567,6 @@ function M.setup()
 					title = "Unreal",
 					kind = "unreal",
 				})
-				render_stack_tab(nil, { focus = false })
 				pcall(function()
 					require("udebugtool.debug.ui").set_stop_event(nil)
 				end)
