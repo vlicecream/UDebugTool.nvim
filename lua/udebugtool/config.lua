@@ -8,6 +8,7 @@ local defaults = {
 		attach = "<leader>da",
 		editor = "<leader>de",
 		breakpoint = "<leader>db",
+		breakpoint_mute = "<leader>dn",
 		breakpoints_toggle = "<leader>dm",
 		continue = "<leader>dc",
 		stop = "<leader>ds",

@@ -788,6 +788,7 @@ local function render_left(session)
 	push_line(builder, "  [SPC da] Attach", { group = "UDebugToolValue" })
 	push_line(builder, "  [SPC de] Editor", { group = "UDebugToolValue" })
 	push_line(builder, "  [SPC db] Breakpoint", { group = "UDebugToolValue" })
+	push_line(builder, "  [SPC dn] Breakpoint On / Off", { group = "UDebugToolValue" })
 	push_line(builder, "  [SPC dm] Breakpoints " .. (state.breakpoints_muted and "On" or "Off"), {
 		group = "UDebugToolValue",
 	})
@@ -1039,7 +1040,10 @@ local function render_bottom(session)
 	push_line(builder, "[SPC da] Attach   [SPC de] Editor   [SPC db] Breakpoint   [SPC dc] Continue", {
 		group = "UDebugToolValue",
 	})
-	push_line(builder, "[SPC dm] Breakpoints " .. (state.breakpoints_muted and "On" or "Off") .. "   [SPC ds] Stop   [SPC do] Step Over", {
+	push_line(builder, "[SPC dn] Breakpoint On / Off   [SPC dm] Breakpoints " .. (state.breakpoints_muted and "On" or "Off"), {
+		group = "UDebugToolValue",
+	})
+	push_line(builder, "[SPC ds] Stop   [SPC do] Step Over", {
 		group = "UDebugToolValue",
 	})
 	push_line(builder, "[SPC di] Step Into   [SPC du] Step Out", {

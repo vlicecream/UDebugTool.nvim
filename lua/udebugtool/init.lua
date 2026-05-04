@@ -15,6 +15,7 @@ local function register_default_keymaps()
 		{ keymaps.attach, debug.attach, "UDebugTool attach" },
 		{ keymaps.editor, debug.launch_editor, "UDebugTool debug editor" },
 		{ keymaps.breakpoint, debug.toggle_breakpoint, "UDebugTool breakpoint" },
+		{ keymaps.breakpoint_mute, debug.toggle_breakpoint_mute, "UDebugTool mute breakpoint" },
 		{ keymaps.breakpoints_toggle, debug.toggle_breakpoints_enabled, "UDebugTool toggle breakpoints" },
 		{ keymaps.continue, debug.continue, "UDebugTool continue" },
 		{ keymaps.stop, debug.stop, "UDebugTool stop" },

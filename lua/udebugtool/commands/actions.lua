@@ -14,6 +14,10 @@ function M.breakpoint()
 	debug.toggle_breakpoint()
 end
 
+function M.breakpoint_mute()
+	debug.toggle_breakpoint_mute()
+end
+
 function M.breakpoints_toggle()
 	debug.toggle_breakpoints_enabled()
 end
@@ -45,6 +49,7 @@ UDebugTool commands:
   :UDebugTool attach       Attach to the current Unreal process
   :UDebugTool editor       Build and launch Unreal Editor under debugger
   :UDebugTool breakpoint   Toggle a breakpoint at the cursor
+  :UDebugTool breakpoint-mute   Toggle current breakpoint on / off
   :UDebugTool breakpoints-toggle   Toggle all breakpoints on / off
   :UDebugTool continue     Continue session, or attach / launch if none
   :UDebugTool stop         Stop the active debug session
