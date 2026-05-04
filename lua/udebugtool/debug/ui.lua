@@ -508,7 +508,42 @@ local function open_toolbar()
 	return win, buf
 end
 
-local function float_win_config(row, col, width, height)
+local function panel_title(keymap_name)
+	local titles = {
+		scopes = " Locals ",
+		breakpoints = " Breakpoints ",
+		stacks = " Stacks ",
+		watches_panel = " Watches ",
+		controls = " Controls ",
+		console = " Console ",
+	}
+	return titles[keymap_name]
+end
+
+local function panel_border(keymap_name)
+	local hide_bottom = {
+		scopes = true,
+		breakpoints = true,
+		stacks = true,
+	}
+
+	if not hide_bottom[keymap_name] then
+		return "single"
+	end
+
+	return {
+		"┌",
+		"─",
+		"┐",
+		"│",
+		" ",
+		" ",
+		" ",
+		"│",
+	}
+end
+
+local function float_win_config(row, col, width, height, title, border)
 	return {
 		relative = "editor",
 		row = row,
@@ -516,16 +551,25 @@ local function float_win_config(row, col, width, height)
 		width = width,
 		height = height,
 		style = "minimal",
-		border = "single",
+		border = border or "single",
 		focusable = true,
 		zindex = 70,
 		noautocmd = true,
+		title = title,
+		title_pos = title and "center" or nil,
 	}
 end
 
 local function ensure_float_slot(slot, buf, keymap_name, row, col, width, height, opts)
 	opts = opts or {}
-	local win_config = float_win_config(row, col, width, height)
+	local win_config = float_win_config(
+		row,
+		col,
+		width,
+		height,
+		opts.title or panel_title(keymap_name),
+		opts.border or panel_border(keymap_name)
+	)
 	local win = slot.win
 	if valid_win(win) then
 		local ok, cfg = pcall(vim.api.nvim_win_get_config, win)
@@ -617,8 +661,8 @@ local function grid_cell_geometry(layout)
 		outer_height = outer_height,
 		content_width = content_width,
 		content_height = content_height,
-		col_step = math.max(1, outer_width - GRID_BORDER_OVERLAP),
-		row_step = math.max(1, outer_height - GRID_BORDER_OVERLAP),
+		col_step = math.max(1, outer_width),
+		row_step = math.max(1, outer_height),
 	}
 end
 
