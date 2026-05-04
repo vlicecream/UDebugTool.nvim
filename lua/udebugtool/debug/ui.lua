@@ -885,7 +885,7 @@ local function find_source_window()
 		end
 	end
 
-	return current
+	return nil
 end
 
 local function jump_to_frame(frame)
