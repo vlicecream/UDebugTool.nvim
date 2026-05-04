@@ -40,6 +40,23 @@ local state = {
 
 local truncate
 
+local function cursorline_slots()
+	return {
+		state.left,
+		state.right,
+		state.bottom,
+		state.scopes,
+		state.breakpoints,
+		state.stacks,
+		state.watches_panel,
+		state.controls,
+		state.console_frame,
+		state.console_tabs,
+		state.console,
+		state.toolbar,
+	}
+end
+
 local function shared_output_panel()
 	local panel = rawget(_G, "__ucore_output_panel_api")
 	if type(panel) == "table" and type(panel.open_tab) == "function" then
@@ -274,7 +291,7 @@ local function setup_window(win, opts)
 	vim.wo[win].foldcolumn = "0"
 	vim.wo[win].spell = false
 	vim.wo[win].wrap = opts.wrap == true
-	vim.wo[win].cursorline = opts.cursorline == true
+	vim.wo[win].cursorline = false
 	vim.wo[win].winfixwidth = opts.winfixwidth == true
 	vim.wo[win].winfixheight = opts.winfixheight == true
 	vim.wo[win].list = false
@@ -289,6 +306,36 @@ local function setup_window(win, opts)
 	vim.wo[win].winhl = table.concat(vim.tbl_filter(function(item)
 		return item ~= nil
 	end, winhl), ",")
+end
+
+local function refresh_cursorlines()
+	local current = vim.api.nvim_get_current_win()
+	for _, slot in ipairs(cursorline_slots()) do
+		if valid_win(slot.win) then
+			local enabled = slot.cursorline_enabled == true and slot.win == current
+			pcall(function()
+				vim.wo[slot.win].cursorline = enabled
+			end)
+		end
+	end
+end
+
+local function ensure_cursorline_autocmds()
+	if state.cursorline_augroup then
+		return
+	end
+	local group = vim.api.nvim_create_augroup("UDebugToolCursorline", { clear = true })
+	state.cursorline_augroup = group
+	vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter", "WinLeave" }, {
+		group = group,
+		callback = function()
+			if vim.in_fast_event() then
+				vim.schedule(refresh_cursorlines)
+			else
+				refresh_cursorlines()
+			end
+		end,
+	})
 end
 
 local function apply_buffer_keymaps(slot_name, buf)
@@ -505,6 +552,7 @@ local function ensure_float_slot(slot, buf, keymap_name, row, col, width, height
 		wrap = opts.wrap == true,
 		float = true,
 	})
+	slot.cursorline_enabled = opts.cursorline == true
 	apply_buffer_keymaps(keymap_name, buf)
 	return win, buf
 end
@@ -618,6 +666,7 @@ local function ensure_inner_slot(slot, buf, row, col, width, height, opts)
 		wrap = opts.wrap == true,
 		float = true,
 	})
+	slot.cursorline_enabled = opts.cursorline == true
 	return win, buf
 end
 
@@ -1646,8 +1695,7 @@ end
 local function render_toolbar(session)
 	local _, buf = open_toolbar()
 	local builder = new_builder()
-	local icons = "  ▶ Continue   ■ Stop   ⤼ Over   ⤶ Into   ⤴ Out   ● Break   ◌ Mute"
-	local keys = "   dc          ds         do        di        du       db       dn/dm"
+	local icons = "            "
 	local summary
 
 	if not session then
@@ -1663,16 +1711,14 @@ local function render_toolbar(session)
 	push_line(builder, icons, {
 		group = "UDebugToolValue",
 		spans = {
-			{ group = "UDebugToolToolbarHot", start_col = 2, end_col = 3 },
-			{ group = "UDebugToolToolbarHot", start_col = 15, end_col = 16 },
-			{ group = "UDebugToolToolbarHot", start_col = 24, end_col = 25 },
-			{ group = "UDebugToolToolbarHot", start_col = 34, end_col = 35 },
-			{ group = "UDebugToolToolbarHot", start_col = 44, end_col = 45 },
-			{ group = "UDebugToolDanger", start_col = 52, end_col = 53 },
-			{ group = state.breakpoints_muted and "UDebugToolDanger" or "UDebugToolMuted", start_col = 62, end_col = 63 },
+			{ group = "UDebugToolAccent", start_col = 2, end_col = 3 },
+			{ group = "UDebugToolToolbarHot", start_col = 5, end_col = 6 },
+			{ group = "UDebugToolToolbarHot", start_col = 8, end_col = 9 },
+			{ group = "UDebugToolToolbarHot", start_col = 11, end_col = 12 },
+			{ group = "UDebugToolAccent", start_col = 14, end_col = 15 },
+			{ group = "UDebugToolDanger", start_col = 17, end_col = 18 },
 		},
 	})
-	push_line(builder, keys, { group = "UDebugToolMuted" })
 	push_line(builder, "  " .. summary, {
 		group = not session and "UDebugToolMuted" or (state.running and "UDebugToolAccent" or "UDebugToolWarn"),
 	})
@@ -1927,42 +1973,16 @@ end
 local function render_controls_panel(session)
 	local buf = ensure_buf(state.controls, "UDebugToolControls", "udebugtool-debug-controls")
 	local builder = new_builder()
-	push_panel_header(builder, "Controls")
-	local summary
-	if not session then
-		summary = "Idle"
-	elseif state.running then
-		summary = "Running"
-	elseif session.current_frame then
-		summary = "Stopped"
-	else
-		summary = "Attached"
-	end
-	push_line(builder, summary, {
-		group = not session and "UDebugToolMuted" or (state.running and "UDebugToolAccent" or "UDebugToolWarn"),
-	})
-	if state.stop_event and stop_reason_text() then
-		push_line(builder, stop_reason_text(), { group = "UDebugToolDanger" })
-	end
-	push_line(builder, "")
-	push_line(builder, "  ▶ Continue   ■ Stop   ⤼ Over   ⤶ Into   ⤴ Out   ● Break   ◌ Mute", {
+	push_line(builder, "            ", {
 		group = "UDebugToolValue",
 		spans = {
-			{ group = "UDebugToolToolbarHot", start_col = 2, end_col = 3 },
-			{ group = "UDebugToolToolbarHot", start_col = 15, end_col = 16 },
-			{ group = "UDebugToolToolbarHot", start_col = 24, end_col = 25 },
-			{ group = "UDebugToolToolbarHot", start_col = 34, end_col = 35 },
-			{ group = "UDebugToolToolbarHot", start_col = 44, end_col = 45 },
-			{ group = "UDebugToolDanger", start_col = 52, end_col = 53 },
-			{ group = state.breakpoints_muted and "UDebugToolDanger" or "UDebugToolMuted", start_col = 62, end_col = 63 },
+			{ group = "UDebugToolAccent", start_col = 2, end_col = 3 },
+			{ group = "UDebugToolToolbarHot", start_col = 5, end_col = 6 },
+			{ group = "UDebugToolToolbarHot", start_col = 8, end_col = 9 },
+			{ group = "UDebugToolToolbarHot", start_col = 11, end_col = 12 },
+			{ group = "UDebugToolAccent", start_col = 14, end_col = 15 },
+			{ group = "UDebugToolDanger", start_col = 17, end_col = 18 },
 		},
-	})
-	push_line(builder, "   dc          ds         do        di        du       db       dn/dm", {
-		group = "UDebugToolMuted",
-	})
-	push_line(builder, "")
-	push_line(builder, "Enter on stacks / breakpoints to jump", {
-		group = "UDebugToolMuted",
 	})
 	set_lines(state.controls, builder.lines, builder.items, builder.highlights)
 	vim.bo[buf].modifiable = false
@@ -2094,6 +2114,7 @@ end
 
 function M.open()
 	setup_highlights()
+	ensure_cursorline_autocmds()
 	sync_watches()
 	state.console_title = "Console"
 	clear_debug_grid()
@@ -2103,6 +2124,7 @@ function M.open()
 	state.toolbar.win = nil
 	ensure_sidebar_layout()
 	ensure_tray_layout()
+	refresh_cursorlines()
 end
 
 function M.hover_under_cursor()
