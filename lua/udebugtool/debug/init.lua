@@ -8,6 +8,7 @@ local M = {}
 local ADAPTER_PROGRESS_TITLE = "UDebugTool Debug Adapter Init"
 local render_stack_tab
 local jump_to_frame
+local activate_stack_frame
 
 local redirect_group = "udebugtool_debug_redirect"
 local track_ns = vim.api.nvim_create_namespace("udebugtool_debug_track")
@@ -367,12 +368,12 @@ render_stack_tab = function(session, opts)
 			local marker = frame and item.id == frame.id and ">" or " "
 			local label = string.format("%s %02d %s", marker, index, tostring(item.name or "<frame>"))
 			add(label, marker == ">" and "UCoreOutputSuccess" or "UCoreOutputInfo", function()
-				jump_to_frame(item)
+				activate_stack_frame(session, thread_id, item)
 			end)
 			local source = normalize(item.source and item.source.path or "")
 			if source ~= "" then
 				add("    " .. source .. ":" .. tostring(item.line or 0), "UCoreOutputMuted", function()
-					jump_to_frame(item)
+					activate_stack_frame(session, thread_id, item)
 				end)
 			end
 		end
@@ -776,6 +777,24 @@ local function set_session_frame(session, thread_id, frame)
 		session:_frame_set(frame)
 	else
 		session.current_frame = frame
+	end
+end
+
+activate_stack_frame = function(session, thread_id, frame)
+	if not session or not frame then
+		return
+	end
+
+	set_session_frame(session, thread_id, frame)
+	jump_to_frame(frame)
+	render_stack_tab(session, { focus = true })
+
+	local ok_ui, debug_ui = pcall(require, "udebugtool.debug.ui")
+	if ok_ui and debug_ui then
+		local is_open = type(debug_ui.is_open) == "function" and debug_ui.is_open() or false
+		if is_open or auto_open_ui_enabled() then
+			debug_ui.refresh(session)
+		end
 	end
 end
 
