@@ -77,10 +77,20 @@ end
 local function append_debug_output(root, message, opts)
 	local panel = shared_output_panel()
 	if not panel or not message or message == "" then
+		pcall(function()
+			require("udebugtool.debug.ui").append_console(message, {
+				group = opts and opts.group or nil,
+			})
+		end)
 		return
 	end
 
 	opts = opts or {}
+	pcall(function()
+		require("udebugtool.debug.ui").append_console(message, {
+			group = opts.group,
+		})
+	end)
 	if opts.replace then
 		panel.replace(debug_output_key(root), { tostring(message) }, {
 			title = opts.title or "Unreal",
@@ -99,6 +109,32 @@ local function append_debug_output(root, message, opts)
 		status = opts.status or "running",
 		line_groups = { opts.group or "UCoreOutputInfo" },
 	})
+end
+
+local function append_console_output(output, category)
+	if not output or output == "" then
+		return
+	end
+
+	local lines = vim.split(tostring(output):gsub("\r\n", "\n"):gsub("\r", "\n"), "\n", { plain = true })
+	if lines[#lines] == "" then
+		table.remove(lines, #lines)
+	end
+
+	local group = nil
+	if category == "stderr" then
+		group = "UDebugToolDanger"
+	elseif category == "console" or category == "stdout" then
+		group = "UDebugToolValue"
+	elseif category == "important" then
+		group = "UDebugToolWarn"
+	end
+
+	pcall(function()
+		require("udebugtool.debug.ui").append_console(lines, {
+			group = group,
+		})
+	end)
 end
 
 local function open_unreal_output(root, lines, opts)
@@ -3452,6 +3488,9 @@ function M.setup()
 			dap.listeners.after.event_initialized.udebugtool = function()
 				state.attach_in_progress = false
 				state.attach_target_pid = nil
+				pcall(function()
+					require("udebugtool.debug.ui").clear_console()
+				end)
 				local root = active_root()
 				local ctx = root and project_context(root) or nil
 				if ctx then
@@ -3471,6 +3510,9 @@ function M.setup()
 				if auto_open_ui_enabled() or debug_ui.is_open() then
 					debug_ui.refresh(dap.session())
 				end
+			end
+			dap.listeners.after.event_output.udebugtool = function(_, body)
+				append_console_output(body and body.output or "", body and body.category or nil)
 			end
 			dap.listeners.after.event_stopped.udebugtool = function(_, body)
 				local session = dap.session()
@@ -3565,12 +3607,16 @@ function M.reset()
 	pcall(function()
 		require("udebugtool.debug.ui").set_breakpoints_muted(false)
 	end)
+	pcall(function()
+		require("udebugtool.debug.ui").clear_console()
+	end)
 
 	if dap_available() then
 		local ok, dap = pcall(require, "dap")
 		if ok and dap and dap.listeners then
 			pcall(function()
 				dap.listeners.after.event_initialized.udebugtool = nil
+				dap.listeners.after.event_output.udebugtool = nil
 				dap.listeners.after.event_stopped.udebugtool = nil
 				dap.listeners.after.event_continued.udebugtool = nil
 				dap.listeners.before.event_terminated.udebugtool = nil
