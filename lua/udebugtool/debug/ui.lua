@@ -16,6 +16,7 @@ local state = {
 	watch_values = {},
 	children_cache = {},
 	expanded = {},
+	breakpoints_muted = false,
 	selected_watch = nil,
 	stop_event = nil,
 }
@@ -756,6 +757,12 @@ local function render_left(session)
 			{ group = "UDebugToolValue", start_col = 10, end_col = -1 },
 		},
 	})
+	push_line(builder, "  Breaks  " .. (state.breakpoints_muted and "Off" or "On"), {
+		spans = {
+			{ group = "UDebugToolLabel", start_col = 2, end_col = 9 },
+			{ group = state.breakpoints_muted and "UDebugToolDanger" or "UDebugToolAccent", start_col = 10, end_col = -1 },
+		},
+	})
 	if session and session.current_frame then
 		push_line(builder, "  Stop    " .. frame_location(session.current_frame), {
 			spans = {
@@ -781,6 +788,9 @@ local function render_left(session)
 	push_line(builder, "  [SPC da] Attach", { group = "UDebugToolValue" })
 	push_line(builder, "  [SPC de] Editor", { group = "UDebugToolValue" })
 	push_line(builder, "  [SPC db] Breakpoint", { group = "UDebugToolValue" })
+	push_line(builder, "  [SPC dm] Breakpoints " .. (state.breakpoints_muted and "On" or "Off"), {
+		group = "UDebugToolValue",
+	})
 	push_line(builder, "  [SPC dc] Continue", { group = "UDebugToolValue" })
 	push_line(builder, "  [SPC ds] Stop", { group = "UDebugToolValue" })
 	push_line(builder, "  [SPC do] Step Over", { group = "UDebugToolValue" })
@@ -1029,7 +1039,10 @@ local function render_bottom(session)
 	push_line(builder, "[SPC da] Attach   [SPC de] Editor   [SPC db] Breakpoint   [SPC dc] Continue", {
 		group = "UDebugToolValue",
 	})
-	push_line(builder, "[SPC ds] Stop   [SPC do] Step Over   [SPC di] Step Into   [SPC du] Step Out", {
+	push_line(builder, "[SPC dm] Breakpoints " .. (state.breakpoints_muted and "On" or "Off") .. "   [SPC ds] Stop   [SPC do] Step Over", {
+		group = "UDebugToolValue",
+	})
+	push_line(builder, "[SPC di] Step Into   [SPC du] Step Out", {
 		group = "UDebugToolValue",
 	})
 	push_line(builder, "[CR] Jump / Expand   [a] Add Watch   [x] Delete Watch   [r] Refresh   [q] Close", {
@@ -1174,6 +1187,10 @@ function M.mark_running(session)
 	sync_watches()
 	M.open()
 	render_all(session)
+end
+
+function M.set_breakpoints_muted(muted)
+	state.breakpoints_muted = muted == true
 end
 
 function M.refresh(session)
