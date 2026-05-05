@@ -1809,7 +1809,7 @@ local function render_variable_tree(builder, session, entry, depth, item_kind, i
 	local operator_start = nil
 	if value ~= "" then
 		text = text .. " = " .. value
-		operator_start = #indent + #prefix + 2 + #name
+		operator_start = name_start + #name
 	end
 
 	local spans = {
