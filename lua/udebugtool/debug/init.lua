@@ -2492,29 +2492,23 @@ local function save_project_breakpoints(root)
 	refresh_debug_ui_breakpoints()
 end
 
-local function set_breakpoint_record(root, item)
-	apply_breakpoint_record(item, false)
+local function clear_redirected_breakpoints(root)
+	root = root or active_root()
+	if not root then
+		return
+	end
 
-	if item.redirected then
-		local display_bufnr, display_sign_id = place_display_sign(item.display_path, item.display_line)
-		local tracked_bufnr, tracked_mark_id = set_actual_mark(item.actual_path, item.actual_line)
-		if display_bufnr and display_sign_id and tracked_bufnr and tracked_mark_id then
-			state.redirected[redirect_key(item.display_path, item.display_line)] = {
-				project_root = root,
-				display_path = normalize(item.display_path),
-				display_line = item.display_line,
-				display_bufnr = display_bufnr,
-				display_sign_id = display_sign_id,
-				actual_path = normalize(item.actual_path),
-				actual_line = item.actual_line,
-				actual_bufnr = tracked_bufnr,
-				actual_mark_id = tracked_mark_id,
-				condition = item.condition,
-				hit_condition = item.hit_condition,
-				log_message = item.log_message,
-			}
+	for key, entry in pairs(state.redirected) do
+		if entry.project_root == root then
+			remove_actual_mark(entry)
+			unplace_display_sign(entry)
+			state.redirected[key] = nil
 		end
 	end
+end
+
+local function set_breakpoint_record(root, item)
+	apply_breakpoint_record(item, false)
 end
 
 local function restore_project_breakpoints(root)
@@ -2522,6 +2516,8 @@ local function restore_project_breakpoints(root)
 	if not root or state.loaded_roots[root] or not dap_available() or breakpoints_muted(root) then
 		return
 	end
+
+	clear_redirected_breakpoints(root)
 
 	local payload = read_json(breakpoint_store_path(root))
 	state.loaded_roots[root] = true
@@ -3307,33 +3303,6 @@ function M.toggle_breakpoint_with_opts(opts)
 	local key, redirected = entry_at_display(file_path, line)
 	if key and redirected then
 		return remove_redirected_breakpoint(key, redirected)
-	end
-
-	local debug_config = config.values.debug or {}
-	if debug_config.redirect_header_breakpoints ~= false and is_header_file(file_path) then
-		local cursor = vim.api.nvim_win_get_cursor(0)
-		return resolve_header_breakpoint_target(root, bufnr, file_path, cursor[1] - 1, cursor[2], function(target)
-			if target then
-				target.condition = opts.condition
-				target.hit_condition = opts.hit_condition
-				target.log_message = opts.log_message
-				return create_redirected_breakpoint(root, target)
-			end
-
-			if opts and (opts.condition or opts.hit_condition or opts.log_message) then
-				require("dap.breakpoints").toggle({
-					condition = opts.condition,
-					hit_condition = opts.hit_condition,
-					log_message = opts.log_message,
-					replace = true,
-				}, bufnr, line)
-				save_project_breakpoints(root)
-				sync_active_session_breakpoints(root)
-				return
-			end
-
-			fallback_toggle_current_breakpoint(root)
-		end)
 	end
 
 	if opts and (opts.condition or opts.hit_condition or opts.log_message) then
