@@ -2061,8 +2061,8 @@ local function display_sign_name()
 	end
 
 	vim.fn.sign_define("UDebugToolBreakpoint", {
-		text = "●",
-		texthl = "UDebugToolBreakpointMarker",
+		text = " ",
+		texthl = "",
 		linehl = "",
 		numhl = "",
 	})
@@ -2096,15 +2096,39 @@ end
 
 apply_breakpoint_sign_style = function()
 	define_or_update_sign("UDebugToolBreakpoint", {
-		text = "●",
-		texthl = "UDebugToolBreakpointMarker",
+		text = " ",
+		texthl = "",
+		linehl = "",
+		numhl = "",
+	})
+	define_or_update_sign("DapBreakpoint", {
+		text = " ",
+		texthl = "",
+		linehl = "",
+		numhl = "",
+	})
+	define_or_update_sign("DapBreakpointCondition", {
+		text = " ",
+		texthl = "",
+		linehl = "",
+		numhl = "",
+	})
+	define_or_update_sign("DapBreakpointRejected", {
+		text = " ",
+		texthl = "",
+		linehl = "",
+		numhl = "",
+	})
+	define_or_update_sign("DapLogPoint", {
+		text = " ",
+		texthl = "",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("UDebugToolBreakpointActiveOverlay", {
 		text = "●",
 		texthl = "UDebugToolBreakpointMarker",
-		linehl = "",
+		linehl = "UDebugToolBreakpointLine",
 		numhl = "",
 	})
 	define_or_update_sign("UDebugToolBreakpointMutedOverlay", {
@@ -2118,6 +2142,7 @@ end
 local function setup_debug_marker_signs()
 	vim.api.nvim_set_hl(0, "UDebugToolBreakpointMarker", { fg = "#F44747", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolBreakpointMutedMarker", { fg = "#6B7280", bold = true })
+	vim.api.nvim_set_hl(0, "UDebugToolBreakpointLine", { bg = "#3B0D12" })
 	vim.api.nvim_set_hl(0, "UDebugToolStoppedMarker", { fg = "#FBBF24", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolStoppedLine", { bg = "#3A2C00" })
 
@@ -2294,16 +2319,14 @@ sync_breakpoint_overlays = function(root)
 	local overlays = {}
 	for _, item in ipairs(items) do
 		local muted = breakpoint_is_muted(root, item)
-		if muted then
-			local display_bufnr, display_sign_id = place_overlay_sign(item.display_path, item.display_line, true)
-			if display_bufnr and display_sign_id then
-				table.insert(overlays, { bufnr = display_bufnr, sign_id = display_sign_id })
-			end
-			if item.redirected and normalize(item.actual_path) ~= normalize(item.display_path) then
-				local actual_bufnr, actual_sign_id = place_overlay_sign(item.actual_path, item.actual_line, true)
-				if actual_bufnr and actual_sign_id then
-					table.insert(overlays, { bufnr = actual_bufnr, sign_id = actual_sign_id })
-				end
+		local display_bufnr, display_sign_id = place_overlay_sign(item.display_path, item.display_line, muted)
+		if display_bufnr and display_sign_id then
+			table.insert(overlays, { bufnr = display_bufnr, sign_id = display_sign_id })
+		end
+		if item.redirected and normalize(item.actual_path) ~= normalize(item.display_path) then
+			local actual_bufnr, actual_sign_id = place_overlay_sign(item.actual_path, item.actual_line, muted)
+			if actual_bufnr and actual_sign_id then
+				table.insert(overlays, { bufnr = actual_bufnr, sign_id = actual_sign_id })
 			end
 		end
 	end
@@ -2342,7 +2365,6 @@ local function sync_active_session_breakpoints(root)
 
 	local session = require("dap").session()
 	if not session then
-		sync_breakpoint_overlays(root)
 		return
 	end
 
@@ -2468,23 +2490,29 @@ local function save_project_breakpoints(root)
 	refresh_debug_ui_breakpoints()
 end
 
-local function clear_redirected_breakpoints(root)
-	root = root or active_root()
-	if not root then
-		return
-	end
-
-	for key, entry in pairs(state.redirected) do
-		if entry.project_root == root then
-			remove_actual_mark(entry)
-			unplace_display_sign(entry)
-			state.redirected[key] = nil
-		end
-	end
-end
-
 local function set_breakpoint_record(root, item)
 	apply_breakpoint_record(item, false)
+
+	if item.redirected then
+		local display_bufnr, display_sign_id = place_display_sign(item.display_path, item.display_line)
+		local tracked_bufnr, tracked_mark_id = set_actual_mark(item.actual_path, item.actual_line)
+		if display_bufnr and display_sign_id and tracked_bufnr and tracked_mark_id then
+			state.redirected[redirect_key(item.display_path, item.display_line)] = {
+				project_root = root,
+				display_path = normalize(item.display_path),
+				display_line = item.display_line,
+				display_bufnr = display_bufnr,
+				display_sign_id = display_sign_id,
+				actual_path = normalize(item.actual_path),
+				actual_line = item.actual_line,
+				actual_bufnr = tracked_bufnr,
+				actual_mark_id = tracked_mark_id,
+				condition = item.condition,
+				hit_condition = item.hit_condition,
+				log_message = item.log_message,
+			}
+		end
+	end
 end
 
 local function restore_project_breakpoints(root)
@@ -2492,8 +2520,6 @@ local function restore_project_breakpoints(root)
 	if not root or state.loaded_roots[root] or not dap_available() or breakpoints_muted(root) then
 		return
 	end
-
-	clear_redirected_breakpoints(root)
 
 	local payload = read_json(breakpoint_store_path(root))
 	state.loaded_roots[root] = true
@@ -3255,11 +3281,7 @@ function M.log()
 end
 
 function M.toggle_breakpoint()
-	if not dap_available() then
-		return notify_missing_dap()
-	end
-
-	require("dap").toggle_breakpoint()
+	return M.toggle_breakpoint_with_opts({})
 end
 
 function M.toggle_breakpoint_with_opts(opts)
@@ -3283,6 +3305,33 @@ function M.toggle_breakpoint_with_opts(opts)
 	local key, redirected = entry_at_display(file_path, line)
 	if key and redirected then
 		return remove_redirected_breakpoint(key, redirected)
+	end
+
+	local debug_config = config.values.debug or {}
+	if debug_config.redirect_header_breakpoints ~= false and is_header_file(file_path) then
+		local cursor = vim.api.nvim_win_get_cursor(0)
+		return resolve_header_breakpoint_target(root, bufnr, file_path, cursor[1] - 1, cursor[2], function(target)
+			if target then
+				target.condition = opts.condition
+				target.hit_condition = opts.hit_condition
+				target.log_message = opts.log_message
+				return create_redirected_breakpoint(root, target)
+			end
+
+			if opts and (opts.condition or opts.hit_condition or opts.log_message) then
+				require("dap.breakpoints").toggle({
+					condition = opts.condition,
+					hit_condition = opts.hit_condition,
+					log_message = opts.log_message,
+					replace = true,
+				}, bufnr, line)
+				save_project_breakpoints(root)
+				sync_active_session_breakpoints(root)
+				return
+			end
+
+			fallback_toggle_current_breakpoint(root)
+		end)
 	end
 
 	if opts and (opts.condition or opts.hit_condition or opts.log_message) then
@@ -3596,12 +3645,22 @@ function M.setup()
 	setup_debug_marker_signs()
 
 	local group = vim.api.nvim_create_augroup("UDebugTool", { clear = true })
-	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "BufEnter", "WinEnter" }, {
+	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "BufEnter" }, {
 		group = group,
 		callback = function(args)
-			local win = vim.api.nvim_get_current_win()
-			if vim.api.nvim_win_get_buf(win) == args.buf and vim.bo[args.buf].buftype == "" then
-				vim.wo[win].signcolumn = "yes"
+			local path = vim.api.nvim_buf_get_name(args.buf)
+			local root = path ~= "" and project.find_project_root(path) or nil
+			if root then
+				restore_project_breakpoints(root)
+			end
+		end,
+	})
+
+	vim.api.nvim_create_autocmd("VimLeavePre", {
+		group = group,
+		callback = function()
+			for root, _ in pairs(state.loaded_roots) do
+				save_project_breakpoints(root)
 			end
 		end,
 	})
