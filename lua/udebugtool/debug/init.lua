@@ -20,6 +20,7 @@ local save_project_breakpoints
 local redirect_group = "udebugtool_debug_redirect"
 local overlay_group = "udebugtool_breakpoint_overlay"
 local track_ns = vim.api.nvim_create_namespace("udebugtool_debug_track")
+local breakpoint_hl_ns = vim.api.nvim_create_namespace("udebugtool_breakpoint_hl")
 local ensure_buffer
 
 local state = {
@@ -33,6 +34,7 @@ local state = {
 	breakpoint_log_announce_path = nil,
 	breakpoint_log_failure = nil,
 	breakpoint_last_toggle = nil,
+	breakpoint_line_hls = {},
 	breakpoint_mutes = {},
 	breakpoint_overlays = {},
 	launch_in_progress = false,
@@ -2219,7 +2221,7 @@ local function display_sign_name()
 	vim.fn.sign_define("UDebugToolBreakpoint", {
 		text = "●",
 		texthl = "UDebugToolBreakpointMarker",
-		linehl = "UDebugToolBreakpointLine",
+		linehl = "",
 		numhl = "",
 	})
 	return "UDebugToolBreakpoint"
@@ -2254,37 +2256,37 @@ apply_breakpoint_sign_style = function()
 	define_or_update_sign("UDebugToolBreakpoint", {
 		text = "●",
 		texthl = "UDebugToolBreakpointMarker",
-		linehl = "UDebugToolBreakpointLine",
+		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpoint", {
 		text = "●",
 		texthl = "UDebugToolBreakpointMarker",
-		linehl = "UDebugToolBreakpointLine",
+		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpointCondition", {
 		text = "●",
 		texthl = "UDebugToolBreakpointMarker",
-		linehl = "UDebugToolBreakpointLine",
+		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpointRejected", {
 		text = "●",
 		texthl = "UDebugToolBreakpointMarker",
-		linehl = "UDebugToolBreakpointLine",
+		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapLogPoint", {
 		text = "◆",
 		texthl = "UDebugToolBreakpointMarker",
-		linehl = "UDebugToolBreakpointLine",
+		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("UDebugToolBreakpointActiveOverlay", {
 		text = "●",
 		texthl = "UDebugToolBreakpointMarker",
-		linehl = "UDebugToolBreakpointLine",
+		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("UDebugToolBreakpointMutedOverlay", {
@@ -2440,6 +2442,20 @@ local function place_overlay_sign(path, line, muted)
 	return bufnr, sign_id
 end
 
+local function place_breakpoint_line_hl(path, line, hl_group)
+	local bufnr = ensure_buffer(path)
+	if not bufnr then
+		return nil, nil
+	end
+
+	local extmark_id = vim.api.nvim_buf_set_extmark(bufnr, breakpoint_hl_ns, math.max((line or 1) - 1, 0), 0, {
+		line_hl_group = hl_group,
+		priority = 200,
+		strict = false,
+	})
+	return bufnr, extmark_id
+end
+
 local function clear_overlay_signs(root)
 	local overlays = state.breakpoint_overlays[root or ""] or {}
 	for _, entry in ipairs(overlays) do
@@ -2453,9 +2469,22 @@ local function clear_overlay_signs(root)
 	state.breakpoint_overlays[root or ""] = {}
 end
 
+local function clear_breakpoint_line_hls(root)
+	local extmarks = state.breakpoint_line_hls[root or ""] or {}
+	for _, entry in ipairs(extmarks) do
+		if entry.bufnr and entry.extmark_id and vim.api.nvim_buf_is_valid(entry.bufnr) then
+			pcall(vim.api.nvim_buf_del_extmark, entry.bufnr, breakpoint_hl_ns, entry.extmark_id)
+		end
+	end
+	state.breakpoint_line_hls[root or ""] = {}
+end
+
 local function clear_all_overlay_signs()
 	for root, _ in pairs(state.breakpoint_overlays) do
 		clear_overlay_signs(root)
+	end
+	for root, _ in pairs(state.breakpoint_line_hls) do
+		clear_breakpoint_line_hls(root)
 	end
 end
 
@@ -2466,6 +2495,7 @@ sync_breakpoint_overlays = function(root)
 	end
 
 	clear_overlay_signs(root)
+	clear_breakpoint_line_hls(root)
 
 	local items = collect_project_breakpoints(root)
 	if vim.tbl_isempty(items) and not breakpoint_is_globally_muted(root) then
@@ -2473,23 +2503,36 @@ sync_breakpoint_overlays = function(root)
 	end
 
 	local overlays = {}
+	local line_hls = {}
 	for _, item in ipairs(items) do
 		local muted = breakpoint_is_muted(root, item)
+		local display_hl_group = muted and "UDebugToolBreakpointLine" or "UDebugToolBreakpointLine"
+		local display_hl_bufnr, display_hl_id = place_breakpoint_line_hl(item.display_path, item.display_line, display_hl_group)
+		if display_hl_bufnr and display_hl_id then
+			table.insert(line_hls, { bufnr = display_hl_bufnr, extmark_id = display_hl_id })
+		end
 		if muted then
 			local display_bufnr, display_sign_id = place_overlay_sign(item.display_path, item.display_line, true)
 			if display_bufnr and display_sign_id then
 				table.insert(overlays, { bufnr = display_bufnr, sign_id = display_sign_id })
 			end
 		end
-		if item.redirected and normalize(item.actual_path) ~= normalize(item.display_path) and muted then
-			local actual_bufnr, actual_sign_id = place_overlay_sign(item.actual_path, item.actual_line, muted)
-			if actual_bufnr and actual_sign_id then
-				table.insert(overlays, { bufnr = actual_bufnr, sign_id = actual_sign_id })
+		if item.redirected and normalize(item.actual_path) ~= normalize(item.display_path) then
+			local actual_hl_bufnr, actual_hl_id = place_breakpoint_line_hl(item.actual_path, item.actual_line, display_hl_group)
+			if actual_hl_bufnr and actual_hl_id then
+				table.insert(line_hls, { bufnr = actual_hl_bufnr, extmark_id = actual_hl_id })
+			end
+			if muted then
+				local actual_bufnr, actual_sign_id = place_overlay_sign(item.actual_path, item.actual_line, muted)
+				if actual_bufnr and actual_sign_id then
+					table.insert(overlays, { bufnr = actual_bufnr, sign_id = actual_sign_id })
+				end
 			end
 		end
 	end
 
 	state.breakpoint_overlays[root] = overlays
+	state.breakpoint_line_hls[root] = line_hls
 	local last_toggle = state.breakpoint_last_toggle
 	if last_toggle and last_toggle.root == root then
 		log_breakpoint_debug("overlay_line_after_sync", root, line_sign_summary(last_toggle.path, last_toggle.line))
