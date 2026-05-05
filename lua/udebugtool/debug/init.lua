@@ -27,6 +27,7 @@ local state = {
 	attach_in_progress = false,
 	attach_target_pid = nil,
 	breakpoint_toggle_inflight = false,
+	breakpoint_sync_generation = 0,
 	breakpoint_mutes = {},
 	breakpoint_overlays = {},
 	launch_in_progress = false,
@@ -2382,6 +2383,30 @@ local function with_breakpoint_toggle(root, work)
 	return result
 end
 
+local function next_breakpoint_sync_generation()
+	state.breakpoint_sync_generation = (state.breakpoint_sync_generation or 0) + 1
+	return state.breakpoint_sync_generation
+end
+
+local function current_breakpoint_sync_generation()
+	return state.breakpoint_sync_generation or 0
+end
+
+local function apply_breakpoint_snapshot(root, generation, callback)
+	if generation ~= current_breakpoint_sync_generation() then
+		if callback then
+			callback(false)
+		end
+		return
+	end
+
+	sync_breakpoint_overlays(root)
+	refresh_debug_ui_breakpoints()
+	if callback then
+		callback(true)
+	end
+end
+
 local function finalize_breakpoint_state(root, callback)
 	root = root or active_root()
 	if not root or not dap_available() then
@@ -2390,26 +2415,27 @@ local function finalize_breakpoint_state(root, callback)
 		end
 		return
 	end
+	local generation = next_breakpoint_sync_generation()
 
 	save_project_breakpoints(root)
 
 	local session = require("dap").session()
 	if not session then
-		sync_breakpoint_overlays(root)
-		refresh_debug_ui_breakpoints()
-		if callback then
-			callback()
-		end
+		apply_breakpoint_snapshot(root, generation, function()
+			if callback then
+				callback()
+			end
+		end)
 		return
 	end
 
 	session:set_breakpoints(require("dap.breakpoints").get(), function()
 		vim.schedule(function()
-			sync_breakpoint_overlays(root)
-			refresh_debug_ui_breakpoints()
-			if callback then
-				callback()
-			end
+			apply_breakpoint_snapshot(root, generation, function()
+				if callback then
+					callback()
+				end
+			end)
 		end)
 	end)
 end
@@ -2422,15 +2448,13 @@ local function sync_active_session_breakpoints(root)
 
 	local session = require("dap").session()
 	if not session then
-		sync_breakpoint_overlays(root)
-		refresh_debug_ui_breakpoints()
+		apply_breakpoint_snapshot(root, current_breakpoint_sync_generation())
 		return
 	end
 
 	session:set_breakpoints(require("dap.breakpoints").get(), function()
 		vim.schedule(function()
-			sync_breakpoint_overlays(root)
-			refresh_debug_ui_breakpoints()
+			apply_breakpoint_snapshot(root, current_breakpoint_sync_generation())
 		end)
 	end)
 end
@@ -3772,6 +3796,14 @@ function M.setup()
 			dap.listeners.after.event_output.udebugtool = function(_, body)
 				append_console_output(body and body.output or "", body and body.category or nil)
 			end
+			dap.listeners.after.event_breakpoint.udebugtool = function()
+				local root = active_root()
+				if root then
+					vim.schedule(function()
+						apply_breakpoint_snapshot(root, current_breakpoint_sync_generation())
+					end)
+				end
+			end
 			dap.listeners.after.event_stopped.udebugtool = function(_, body)
 				local session = dap.session()
 				local debug_ui = require("udebugtool.debug.ui")
@@ -3871,6 +3903,7 @@ function M.reset()
 			pcall(function()
 				dap.listeners.after.event_initialized.udebugtool = nil
 				dap.listeners.after.event_output.udebugtool = nil
+				dap.listeners.after.event_breakpoint.udebugtool = nil
 				dap.listeners.after.event_stopped.udebugtool = nil
 				dap.listeners.after.event_continued.udebugtool = nil
 				dap.listeners.before.event_terminated.udebugtool = nil
