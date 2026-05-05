@@ -84,6 +84,18 @@ function M.check()
 		})
 	end
 
+	if status.adapter_ext_config_dir then
+		info("cppvsdbg ext config dir: " .. status.adapter_ext_config_dir)
+	end
+
+	if status.visualizer_file then
+		ok("Unreal natvis: " .. status.visualizer_file)
+	else
+		warn("Unreal natvis not found", {
+			"Expected under Engine/Extras/VisualStudioDebugging/Unreal.natvis for proper Unreal type visualization.",
+		})
+	end
+
 	info("breakpoint store: " .. tostring(status.breakpoint_store))
 end
 

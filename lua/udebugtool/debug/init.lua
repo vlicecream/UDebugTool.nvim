@@ -480,6 +480,44 @@ local function adapter_node_command()
 	return nil
 end
 
+local function cppvsdbg_ext_config_dir()
+	if not vim.env.USERPROFILE or vim.env.USERPROFILE == "" then
+		return nil
+	end
+	return normalize(vim.env.USERPROFILE .. "/.cppvsdbg/extensions")
+end
+
+local function ensure_cppvsdbg_ext_config_dir()
+	local dir = cppvsdbg_ext_config_dir()
+	if not dir or dir == "" then
+		return nil
+	end
+	if vim.fn.isdirectory(dir) ~= 1 then
+		vim.fn.mkdir(dir, "p")
+	end
+	return dir
+end
+
+local function unreal_visualizer_file(ctx)
+	local engine_root = normalize(ctx and ctx.engine_root or nil)
+	if not engine_root or engine_root == "" then
+		return nil
+	end
+
+	local candidates = {
+		path_join(engine_root, "Engine/Extras/VisualStudioDebugging/Unreal.natvis"),
+		path_join(engine_root, "Engine/Extras/VisualStudioDebugging/UE.natvis"),
+	}
+
+	for _, candidate in ipairs(candidates) do
+		if file_readable(candidate) then
+			return candidate
+		end
+	end
+
+	return nil
+end
+
 local function mason_registry()
 	local ok, registry = pcall(require, "mason-registry")
 	if ok and registry then
@@ -1618,8 +1656,9 @@ end
 local function adapter_args()
 	local adapter = adapter_config()
 	local args = { "--interpreter=vscode" }
-	if vim.env.USERPROFILE and vim.env.USERPROFILE ~= "" then
-		table.insert(args, "--extConfigDir=" .. normalize(vim.env.USERPROFILE .. "/.cppvsdbg/extensions"))
+	local ext_dir = ensure_cppvsdbg_ext_config_dir()
+	if ext_dir and ext_dir ~= "" then
+		table.insert(args, "--extConfigDir=" .. ext_dir)
 	end
 	if type(adapter.args) == "table" then
 		for _, arg in ipairs(adapter.args) do
@@ -2628,6 +2667,7 @@ end
 
 local function dap_status(root)
 	root = root or active_root()
+	local ctx = root and project_context(root) or nil
 	local command = adapter_command()
 	local signer = adapter_signer_path()
 	local node = adapter_node_command()
@@ -2642,6 +2682,8 @@ local function dap_status(root)
 		adapter_signer = signer,
 		adapter_auto_install = adapter_auto_install_enabled(),
 		adapter_package = adapter_package_name(),
+		adapter_ext_config_dir = cppvsdbg_ext_config_dir(),
+		visualizer_file = unreal_visualizer_file(ctx),
 		mason_available = mason_available(),
 		adapter_installing = state.adapter_installing,
 		breakpoint_store = root and breakpoint_store_path(root) or nil,
@@ -2851,14 +2893,22 @@ local function attach_with_process(process, ctx)
 			focus = true,
 			group = "UCoreOutputCommand",
 		})
-		dap.run({
+		local dap_config = {
 			type = "cppvsdbg",
 			request = "attach",
 			name = "UDebugTool Attach " .. tostring(process.name or process.pid),
 			processId = pid,
 			program = program,
 			cwd = cwd,
-		})
+		}
+		local visualizer = unreal_visualizer_file(ctx)
+		if visualizer then
+			dap_config.visualizerFile = visualizer
+			append_debug_output(cwd, "Visualizer: " .. visualizer, {
+				group = "UCoreOutputCommand",
+			})
+		end
+		dap.run(dap_config)
 	end)
 end
 
