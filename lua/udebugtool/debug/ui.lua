@@ -335,6 +335,7 @@ local function setup_window(win, opts)
 	vim.wo[win].winhl = table.concat(vim.tbl_filter(function(item)
 		return item ~= nil
 	end, winhl), ",")
+	vim.wo[win].winbar = ""
 end
 
 local function refresh_cursorlines()
@@ -1185,6 +1186,100 @@ local function value_highlight_group(value)
 	return "UDebugToolValue"
 end
 
+local function add_value_spans(spans, text, start_col)
+	local i = 1
+	while i <= #text do
+		local ch = text:sub(i, i)
+		if ch:match("%s") then
+			i = i + 1
+		elseif ch == '"' or ch == "'" then
+			local quote = ch
+			local j = i + 1
+			while j <= #text do
+				local cur = text:sub(j, j)
+				if cur == quote and text:sub(j - 1, j - 1) ~= "\\" then
+					j = j + 1
+					break
+				end
+				j = j + 1
+			end
+			table.insert(spans, {
+				group = "UDebugToolVariableString",
+				start_col = start_col + i - 1,
+				end_col = start_col + j - 1,
+			})
+			i = j
+		elseif text:sub(i, i + 1):lower() == "0x" and text:sub(i + 2, i + 2):match("[%da-fA-F]") then
+			local j = i + 2
+			while j <= #text and text:sub(j, j):match("[%da-fA-F]") do
+				j = j + 1
+			end
+			table.insert(spans, {
+				group = "UDebugToolVariableNumber",
+				start_col = start_col + i - 1,
+				end_col = start_col + j - 1,
+			})
+			i = j
+		elseif (ch == "+" or ch == "-") and text:sub(i + 1, i + 1):match("%d") then
+			local j = i + 1
+			while j <= #text and text:sub(j, j):match("[%d%.]") do
+				j = j + 1
+			end
+			table.insert(spans, {
+				group = "UDebugToolVariableNumber",
+				start_col = start_col + i - 1,
+				end_col = start_col + j - 1,
+			})
+			i = j
+		elseif ch:match("%d") then
+			local j = i + 1
+			while j <= #text and text:sub(j, j):match("[%d%.]") do
+				j = j + 1
+			end
+			table.insert(spans, {
+				group = "UDebugToolVariableNumber",
+				start_col = start_col + i - 1,
+				end_col = start_col + j - 1,
+			})
+			i = j
+		elseif ch:match("[%a_]") then
+			local j = i + 1
+			while j <= #text and text:sub(j, j):match("[%w_]") do
+				j = j + 1
+			end
+			local token = text:sub(i, j - 1)
+			local next_char = next_nonspace_char(text, j)
+			local group = value_highlight_group(token)
+			if group == "UDebugToolValue" then
+				if next_char == "=" or next_char == ":" then
+					group = "UDebugToolVariableName"
+				elseif token:match("^[A-Z]") then
+					group = "UDebugToolCodeType"
+				end
+			end
+			table.insert(spans, {
+				group = group,
+				start_col = start_col + i - 1,
+				end_col = start_col + j - 1,
+			})
+			i = j
+		elseif ch:match("[%[%]%(%)%{%}%*%&,<>:=~]") then
+			local j = i + 1
+			if j <= #text and (ch .. text:sub(j, j)) == "::" then
+				j = j + 1
+			end
+			table.insert(spans, {
+				group = "UDebugToolVariableOperator",
+				start_col = start_col + i - 1,
+				end_col = start_col + j - 1,
+			})
+			i = j
+		else
+			i = i + 1
+		end
+	end
+end
+
 local function frame_location(frame)
 	local source = frame and frame.source or {}
 	local path = source.path or source.name or "<unknown>"
@@ -1727,11 +1822,7 @@ local function render_variable_tree(builder, session, entry, depth, item_kind, i
 			start_col = operator_start,
 			end_col = operator_start + 3,
 		})
-		table.insert(spans, {
-			group = value_highlight_group(value),
-			start_col = operator_start + 3,
-			end_col = -1,
-		})
+		add_value_spans(spans, value, operator_start + 3)
 	end
 
 	push_line(builder, text, {
@@ -2320,6 +2411,17 @@ local function render_breakpoints_panel()
 	vim.bo[buf].modifiable = false
 end
 
+local function controls_winbar()
+	return table.concat({
+		"%#UDebugToolAccent#  %*",
+		"%#UDebugToolToolbarHot#  %*",
+		"%#UDebugToolToolbarHot#  %*",
+		"%#UDebugToolToolbarHot#  %*",
+		"%#UDebugToolAccent#  %*",
+		"%#UDebugToolDanger#  %*",
+	}, " ")
+end
+
 local function render_stacks_panel(session)
 	local buf = ensure_buf(state.stacks, "UDebugToolStacks", "udebugtool-debug-stacks")
 	local builder = new_builder()
@@ -2483,47 +2585,16 @@ end
 render_controls_panel = function(session)
 	local buf = ensure_buf(state.controls, "UDebugToolControls", "udebugtool-debug-controls")
 	local builder = new_builder()
-	local icon_line = ""
-	local spans = {}
-	local item_regions = {}
-	for index, button in ipairs(control_buttons) do
-		if index > 1 then
-			icon_line = icon_line .. "  "
-		end
-		local start_col = #icon_line
-		icon_line = icon_line .. button.icon
-		local end_col = #icon_line
-		spans[#spans + 1] = {
-			group = control_button_group(button),
-			start_col = start_col,
-			end_col = end_col,
-		}
-		item_regions[#item_regions + 1] = {
-			start_col = start_col + 1,
-			end_col = end_col + 1,
-			item = {
-				kind = "control",
-				action = button.action,
-				name = button.label,
-			},
-		}
+	if valid_win(state.controls.win) then
+		vim.wo[state.controls.win].winbar = controls_winbar()
 	end
-	push_line(builder, icon_line, {
-		group = "UDebugToolValue",
-		padding = 1,
-		spans = spans,
-		item_regions = item_regions,
-	})
 
 	if not session then
-		push_line(builder, "", { padding = 0 })
 		push_line(builder, "No active session", { group = "UDebugToolMuted", padding = 1 })
 		set_lines(state.controls, builder.lines, builder.items, builder.highlights, builder.item_regions)
 		vim.bo[buf].modifiable = false
 		return
 	end
-
-	push_line(builder, "", { padding = 0 })
 
 	local thread_id = session.stopped_thread_id
 	local thread = thread_id and session.threads and session.threads[thread_id] or nil
