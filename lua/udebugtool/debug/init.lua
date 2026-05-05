@@ -26,6 +26,7 @@ local state = {
 	adapter_waiters = {},
 	attach_in_progress = false,
 	attach_target_pid = nil,
+	breakpoint_toggle_inflight = false,
 	breakpoint_mutes = {},
 	breakpoint_overlays = {},
 	launch_in_progress = false,
@@ -2357,6 +2358,62 @@ local function breakpoints_muted(root)
 	return muted and muted.all_items ~= nil or false
 end
 
+local function with_breakpoint_toggle(root, work)
+	root = root or active_root()
+	if state.breakpoint_toggle_inflight then
+		return vim.notify("UDebugTool: breakpoint update still syncing", vim.log.levels.INFO)
+	end
+
+	state.breakpoint_toggle_inflight = true
+
+	local function done()
+		state.breakpoint_toggle_inflight = false
+	end
+
+	local ok, result = xpcall(function()
+		return work(done)
+	end, debug.traceback)
+
+	if not ok then
+		done()
+		error(result)
+	end
+
+	return result
+end
+
+local function finalize_breakpoint_state(root, callback)
+	root = root or active_root()
+	if not root or not dap_available() then
+		if callback then
+			callback()
+		end
+		return
+	end
+
+	save_project_breakpoints(root)
+
+	local session = require("dap").session()
+	if not session then
+		sync_breakpoint_overlays(root)
+		refresh_debug_ui_breakpoints()
+		if callback then
+			callback()
+		end
+		return
+	end
+
+	session:set_breakpoints(require("dap.breakpoints").get(), function()
+		vim.schedule(function()
+			sync_breakpoint_overlays(root)
+			refresh_debug_ui_breakpoints()
+			if callback then
+				callback()
+			end
+		end)
+	end)
+end
+
 local function sync_active_session_breakpoints(root)
 	root = root or active_root()
 	if not root or not dap_available() then
@@ -2365,11 +2422,16 @@ local function sync_active_session_breakpoints(root)
 
 	local session = require("dap").session()
 	if not session then
+		sync_breakpoint_overlays(root)
+		refresh_debug_ui_breakpoints()
 		return
 	end
 
 	session:set_breakpoints(require("dap.breakpoints").get(), function()
-		sync_breakpoint_overlays(root)
+		vim.schedule(function()
+			sync_breakpoint_overlays(root)
+			refresh_debug_ui_breakpoints()
+		end)
 	end)
 end
 
@@ -2486,8 +2548,6 @@ local function save_project_breakpoints(root)
 		version = 1,
 		items = items,
 	})
-	sync_breakpoint_overlays(root)
-	refresh_debug_ui_breakpoints()
 end
 
 local function set_breakpoint_record(root, item)
@@ -2614,7 +2674,7 @@ end
 
 local function remove_redirected_breakpoint(key, entry)
 	if not dap_available() then
-		return
+		return false
 	end
 	local dap_breakpoints = require("dap.breakpoints")
 	local line = actual_line(entry) or entry.actual_line
@@ -2625,8 +2685,7 @@ local function remove_redirected_breakpoint(key, entry)
 	remove_actual_mark(entry)
 	unplace_display_sign(entry)
 	state.redirected[key] = nil
-	save_project_breakpoints(entry.project_root)
-	sync_active_session_breakpoints(entry.project_root)
+	return true
 end
 
 local function create_redirected_breakpoint(root, target)
@@ -2667,9 +2726,6 @@ local function create_redirected_breakpoint(root, target)
 		hit_condition = target.hit_condition,
 		log_message = target.log_message,
 	}
-
-	save_project_breakpoints(root)
-	sync_active_session_breakpoints(root)
 	vim.notify(
 		string.format(
 			"UDebugTool: breakpoint redirected to %s:%d",
@@ -2678,12 +2734,12 @@ local function create_redirected_breakpoint(root, target)
 		),
 		vim.log.levels.INFO
 	)
+	return true
 end
 
 local function fallback_toggle_current_breakpoint(root)
 	require("dap").toggle_breakpoint()
-	save_project_breakpoints(root)
-	sync_active_session_breakpoints(root)
+	return true
 end
 
 local function save_modified_project_buffers(root)
@@ -3297,56 +3353,58 @@ function M.toggle_breakpoint_with_opts(opts)
 		return vim.notify("UDebugTool: breakpoints are muted; toggle them back on first", vim.log.levels.WARN)
 	end
 
-	restore_project_breakpoints(root)
+	return with_breakpoint_toggle(root, function(done)
+		restore_project_breakpoints(root)
 
-	local file_path = normalize(vim.api.nvim_buf_get_name(0))
-	local bufnr = vim.api.nvim_get_current_buf()
-	local line = vim.api.nvim_win_get_cursor(0)[1]
-	local key, redirected = entry_at_display(file_path, line)
-	if key and redirected then
-		return remove_redirected_breakpoint(key, redirected)
-	end
+		local file_path = normalize(vim.api.nvim_buf_get_name(0))
+		local bufnr = vim.api.nvim_get_current_buf()
+		local line = vim.api.nvim_win_get_cursor(0)[1]
+		local key, redirected = entry_at_display(file_path, line)
+		if key and redirected then
+			remove_redirected_breakpoint(key, redirected)
+			return finalize_breakpoint_state(root, done)
+		end
 
-	local debug_config = config.values.debug or {}
-	if debug_config.redirect_header_breakpoints ~= false and is_header_file(file_path) then
-		local cursor = vim.api.nvim_win_get_cursor(0)
-		return resolve_header_breakpoint_target(root, bufnr, file_path, cursor[1] - 1, cursor[2], function(target)
-			if target then
-				target.condition = opts.condition
-				target.hit_condition = opts.hit_condition
-				target.log_message = opts.log_message
-				return create_redirected_breakpoint(root, target)
-			end
+		local debug_config = config.values.debug or {}
+		if debug_config.redirect_header_breakpoints ~= false and is_header_file(file_path) then
+			local cursor = vim.api.nvim_win_get_cursor(0)
+			return resolve_header_breakpoint_target(root, bufnr, file_path, cursor[1] - 1, cursor[2], function(target)
+				if target then
+					target.condition = opts.condition
+					target.hit_condition = opts.hit_condition
+					target.log_message = opts.log_message
+					create_redirected_breakpoint(root, target)
+					return finalize_breakpoint_state(root, done)
+				end
 
-			if opts and (opts.condition or opts.hit_condition or opts.log_message) then
-				require("dap.breakpoints").toggle({
-					condition = opts.condition,
-					hit_condition = opts.hit_condition,
-					log_message = opts.log_message,
-					replace = true,
-				}, bufnr, line)
-				save_project_breakpoints(root)
-				sync_active_session_breakpoints(root)
-				return
-			end
+				if opts and (opts.condition or opts.hit_condition or opts.log_message) then
+					require("dap.breakpoints").toggle({
+						condition = opts.condition,
+						hit_condition = opts.hit_condition,
+						log_message = opts.log_message,
+						replace = true,
+					}, bufnr, line)
+					return finalize_breakpoint_state(root, done)
+				end
 
-			fallback_toggle_current_breakpoint(root)
-		end)
-	end
+				fallback_toggle_current_breakpoint(root)
+				return finalize_breakpoint_state(root, done)
+			end)
+		end
 
-	if opts and (opts.condition or opts.hit_condition or opts.log_message) then
-		require("dap.breakpoints").toggle({
-			condition = opts.condition,
-			hit_condition = opts.hit_condition,
-			log_message = opts.log_message,
-			replace = true,
-		}, bufnr, line)
-		save_project_breakpoints(root)
-		sync_active_session_breakpoints(root)
-		return
-	end
+		if opts and (opts.condition or opts.hit_condition or opts.log_message) then
+			require("dap.breakpoints").toggle({
+				condition = opts.condition,
+				hit_condition = opts.hit_condition,
+				log_message = opts.log_message,
+				replace = true,
+			}, bufnr, line)
+			return finalize_breakpoint_state(root, done)
+		end
 
-	fallback_toggle_current_breakpoint(root)
+		fallback_toggle_current_breakpoint(root)
+		return finalize_breakpoint_state(root, done)
+	end)
 end
 
 function M.conditional_breakpoint()
@@ -3390,25 +3448,33 @@ function M.clear_breakpoints()
 		return notify_missing_dap()
 	end
 
-	require("dap").clear_breakpoints()
-	state.breakpoint_mutes = {}
-	clear_all_overlay_signs()
-	apply_breakpoint_sign_style(false)
-	for key, entry in pairs(state.redirected) do
-		remove_actual_mark(entry)
-		unplace_display_sign(entry)
-		state.redirected[key] = nil
-	end
+	return with_breakpoint_toggle(active_root(), function(done)
+		require("dap").clear_breakpoints()
+		state.breakpoint_mutes = {}
+		clear_all_overlay_signs()
+		apply_breakpoint_sign_style(false)
+		for key, entry in pairs(state.redirected) do
+			remove_actual_mark(entry)
+			unplace_display_sign(entry)
+			state.redirected[key] = nil
+		end
 
-	local root = active_root()
-	if root then
-		save_project_breakpoints(root)
-	end
-	pcall(function()
-		require("udebugtool.debug.ui").set_breakpoints_muted(false)
+		pcall(function()
+			require("udebugtool.debug.ui").set_breakpoints_muted(false)
+		end)
+
+		local root = active_root()
+		if not root then
+			vim.notify("UDebugTool: cleared breakpoints", vim.log.levels.INFO)
+			done()
+			return
+		end
+
+		finalize_breakpoint_state(root, function()
+			vim.notify("UDebugTool: cleared breakpoints", vim.log.levels.INFO)
+			done()
+		end)
 	end)
-
-	vim.notify("UDebugTool: cleared breakpoints", vim.log.levels.INFO)
 end
 
 function M.toggle_breakpoint_mute()
@@ -3424,40 +3490,45 @@ function M.toggle_breakpoint_mute()
 		return vim.notify("UDebugTool: all breakpoints are muted; toggle them back on first", vim.log.levels.WARN)
 	end
 
-	restore_project_breakpoints(root)
+	return with_breakpoint_toggle(root, function(done)
+		restore_project_breakpoints(root)
 
-	local item = breakpoint_item_at_cursor(root)
-	if not item then
-		return vim.notify("UDebugTool: no breakpoint at cursor", vim.log.levels.INFO)
-	end
-
-	local muted = breakpoint_mute_state(root) or {}
-	local key = breakpoint_item_key(item)
-	local original = muted.items_by_key and muted.items_by_key[key] or nil
-
-	if original then
-		apply_breakpoint_record(original, false)
-		muted.items_by_key[key] = nil
-		if next(muted.items_by_key) == nil then
-			muted.items_by_key = nil
+		local item = breakpoint_item_at_cursor(root)
+		if not item then
+			done()
+			return vim.notify("UDebugTool: no breakpoint at cursor", vim.log.levels.INFO)
 		end
-		if muted.all_items == nil and muted.items_by_key == nil then
-			state.breakpoint_mutes[root] = nil
-		else
-			state.breakpoint_mutes[root] = muted
-		end
-		sync_active_session_breakpoints(root)
-		save_project_breakpoints(root)
-		return vim.notify("UDebugTool: breakpoint enabled", vim.log.levels.INFO)
-	end
 
-	muted.items_by_key = muted.items_by_key or {}
-	muted.items_by_key[key] = vim.deepcopy(item)
-	state.breakpoint_mutes[root] = muted
-	apply_breakpoint_record(item, true)
-	sync_active_session_breakpoints(root)
-	save_project_breakpoints(root)
-	vim.notify("UDebugTool: breakpoint muted", vim.log.levels.INFO)
+		local muted = breakpoint_mute_state(root) or {}
+		local key = breakpoint_item_key(item)
+		local original = muted.items_by_key and muted.items_by_key[key] or nil
+
+		if original then
+			apply_breakpoint_record(original, false)
+			muted.items_by_key[key] = nil
+			if next(muted.items_by_key) == nil then
+				muted.items_by_key = nil
+			end
+			if muted.all_items == nil and muted.items_by_key == nil then
+				state.breakpoint_mutes[root] = nil
+			else
+				state.breakpoint_mutes[root] = muted
+			end
+			return finalize_breakpoint_state(root, function()
+				vim.notify("UDebugTool: breakpoint enabled", vim.log.levels.INFO)
+				done()
+			end)
+		end
+
+		muted.items_by_key = muted.items_by_key or {}
+		muted.items_by_key[key] = vim.deepcopy(item)
+		state.breakpoint_mutes[root] = muted
+		apply_breakpoint_record(item, true)
+		finalize_breakpoint_state(root, function()
+			vim.notify("UDebugTool: breakpoint muted", vim.log.levels.INFO)
+			done()
+		end)
+	end)
 end
 
 function M.toggle_breakpoints_enabled()
@@ -3470,57 +3541,62 @@ function M.toggle_breakpoints_enabled()
 		return vim.notify("UDebugTool: could not find .uproject", vim.log.levels.ERROR)
 	end
 
-	local debug_ui = require("udebugtool.debug.ui")
-	local muted = breakpoint_mute_state(root)
-	if muted and muted.all_items then
-		require("dap").clear_breakpoints()
-		for _, item in ipairs(muted.all_items or {}) do
-			if item.redirected then
-				local _, existing = entry_at_display(item.display_path, item.display_line)
-				if existing then
-					existing.condition = item.condition
-					existing.hit_condition = item.hit_condition
-					existing.log_message = item.log_message
-					apply_breakpoint_record(item, false)
+	return with_breakpoint_toggle(root, function(done)
+		local debug_ui = require("udebugtool.debug.ui")
+		local muted = breakpoint_mute_state(root)
+		if muted and muted.all_items then
+			require("dap").clear_breakpoints()
+			for _, item in ipairs(muted.all_items or {}) do
+				if item.redirected then
+					local _, existing = entry_at_display(item.display_path, item.display_line)
+					if existing then
+						existing.condition = item.condition
+						existing.hit_condition = item.hit_condition
+						existing.log_message = item.log_message
+						apply_breakpoint_record(item, false)
+					else
+						set_breakpoint_record(root, item)
+					end
 				else
-					set_breakpoint_record(root, item)
+					apply_breakpoint_record(item, false)
 				end
-			else
-				apply_breakpoint_record(item, false)
 			end
+			muted.all_items = nil
+			if not muted.items_by_key or next(muted.items_by_key) == nil then
+				state.breakpoint_mutes[root] = nil
+			end
+			debug_ui.set_breakpoints_muted(false)
+			return finalize_breakpoint_state(root, function()
+				if debug_ui.is_open() then
+					debug_ui.refresh(require("dap").session())
+				end
+				vim.notify("UDebugTool: breakpoints enabled", vim.log.levels.INFO)
+				done()
+			end)
 		end
-		muted.all_items = nil
-		if not muted.items_by_key or next(muted.items_by_key) == nil then
-			state.breakpoint_mutes[root] = nil
-		end
-		sync_active_session_breakpoints(root)
-		debug_ui.set_breakpoints_muted(false)
-		if debug_ui.is_open() then
-			debug_ui.refresh(require("dap").session())
-		end
-		save_project_breakpoints(root)
-		return vim.notify("UDebugTool: breakpoints enabled", vim.log.levels.INFO)
-	end
 
-	local items = collect_project_breakpoints(root)
-	if vim.tbl_isempty(items) then
-		return vim.notify("UDebugTool: no breakpoints to mute", vim.log.levels.INFO)
-	end
+		local items = collect_project_breakpoints(root)
+		if vim.tbl_isempty(items) then
+			done()
+			return vim.notify("UDebugTool: no breakpoints to mute", vim.log.levels.INFO)
+		end
 
-	muted = muted or {}
-	muted.all_items = vim.deepcopy(items)
-	state.breakpoint_mutes[root] = muted
-	require("dap").clear_breakpoints()
-	for _, item in ipairs(items) do
-		apply_breakpoint_record(item, true)
-	end
-	sync_active_session_breakpoints(root)
-	debug_ui.set_breakpoints_muted(true)
-	if debug_ui.is_open() then
-		debug_ui.refresh(require("dap").session())
-	end
-	save_project_breakpoints(root)
-	vim.notify("UDebugTool: breakpoints muted", vim.log.levels.INFO)
+		muted = muted or {}
+		muted.all_items = vim.deepcopy(items)
+		state.breakpoint_mutes[root] = muted
+		require("dap").clear_breakpoints()
+		for _, item in ipairs(items) do
+			apply_breakpoint_record(item, true)
+		end
+		debug_ui.set_breakpoints_muted(true)
+		finalize_breakpoint_state(root, function()
+			if debug_ui.is_open() then
+				debug_ui.refresh(require("dap").session())
+			end
+			vim.notify("UDebugTool: breakpoints muted", vim.log.levels.INFO)
+			done()
+		end)
+	end)
 end
 
 function M.list_breakpoints()
