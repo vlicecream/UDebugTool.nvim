@@ -3099,10 +3099,17 @@ end
 
 function M.dashboard()
 	local debug_ui = require("udebugtool.debug.ui")
+	if debug_ui.is_open and debug_ui.is_open() then
+		if debug_ui.is_focused and debug_ui.is_focused() then
+			return debug_ui.close()
+		end
+		return debug_ui.focus_primary()
+	end
 	if dap_available() then
 		return debug_ui.refresh(require("dap").session())
 	end
 	debug_ui.open()
+	return debug_ui.focus_primary()
 end
 
 function M.log()
@@ -3112,6 +3119,9 @@ function M.log()
 	local key = root and debug_output_key(root) or "workspace:unreal"
 
 	if debug_ui.is_open and debug_ui.is_open() then
+		if debug_ui.is_console_focused and debug_ui.is_console_focused() then
+			return debug_ui.close()
+		end
 		if panel then
 			panel.open_tab({
 				key = key,
@@ -3122,8 +3132,21 @@ function M.log()
 			})
 			panel.select(key)
 		end
-		debug_ui.focus_console()
-		return
+		return debug_ui.focus_console()
+	end
+
+	if panel and panel.is_open and panel.is_open() and (not panel.host_name or panel.host_name() ~= "udebugtool") then
+		if type(panel.is_focused) == "function" and panel.is_focused() and type(panel.hide) == "function" then
+			panel.hide()
+			return
+		end
+		if type(panel.select) == "function" then
+			panel.select(key)
+		end
+		if type(panel.focus) == "function" then
+			panel.focus(key)
+			return
+		end
 	end
 
 	if panel then
@@ -3135,11 +3158,14 @@ function M.log()
 			explicit = true,
 		})
 		panel.select(key)
+		if type(panel.focus) == "function" then
+			panel.focus(key)
+		end
 		return
 	end
 
 	M.dashboard()
-	debug_ui.focus_console()
+	return debug_ui.focus_console()
 end
 
 function M.toggle_breakpoint()

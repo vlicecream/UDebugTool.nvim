@@ -11,7 +11,6 @@ function M.dispatch(args)
 	local sub = normalize_subcommand(args)
 	local handlers = {
 		dashboard = actions.dashboard,
-		log = actions.log,
 		attach = actions.attach,
 		editor = actions.editor,
 		breakpoint = actions.breakpoint,
@@ -43,7 +42,6 @@ function M.register()
 		complete = function(arglead)
 			local items = {
 				"dashboard",
-				"log",
 				"attach",
 				"editor",
 				"breakpoint",

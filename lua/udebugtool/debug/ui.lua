@@ -2612,6 +2612,32 @@ function M.is_open()
 	return valid_win(state.scopes.win) or valid_win(state.watches_panel.win) or valid_win(state.controls.win) or valid_win(state.console.win)
 end
 
+function M.is_focused()
+	local current = vim.api.nvim_get_current_win()
+	return is_ui_win(current)
+end
+
+function M.is_console_focused()
+	local current = vim.api.nvim_get_current_win()
+	return current == state.console.win or current == state.console_tabs.win
+end
+
+function M.focus_primary()
+	for _, win in ipairs({
+		state.scopes.win,
+		state.controls.win,
+		state.stacks.win,
+		state.breakpoints.win,
+		state.watches_panel.win,
+	}) do
+		if valid_win(win) then
+			pcall(vim.api.nvim_set_current_win, win)
+			return true
+		end
+	end
+	return false
+end
+
 function M.focus_console()
 	if valid_win(state.console.win) then
 		pcall(vim.api.nvim_set_current_win, state.console.win)
