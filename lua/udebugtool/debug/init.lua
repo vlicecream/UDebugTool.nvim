@@ -14,6 +14,7 @@ local apply_breakpoint_sign_style
 local sync_breakpoint_overlays
 local active_root
 local collect_project_breakpoints
+local dap_available
 local save_project_breakpoints
 
 local redirect_group = "udebugtool_debug_redirect"
@@ -751,7 +752,7 @@ local function latest_file_in_dir(dir)
 	return best_path, best_stat
 end
 
-local function dap_available()
+dap_available = function()
 	return has_module("dap")
 end
 
