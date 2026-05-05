@@ -974,6 +974,19 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "UDebugToolControlActive", { fg = "#F8FAFC", bg = "#374151", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolBorder", { fg = "#3F3F46" })
 	vim.api.nvim_set_hl(0, "UDebugToolCursorLine", { bg = "#171717" })
+	vim.api.nvim_set_hl(0, "UDebugToolVariableName", { link = "Identifier" })
+	vim.api.nvim_set_hl(0, "UDebugToolVariableOperator", { link = "Operator" })
+	vim.api.nvim_set_hl(0, "UDebugToolVariableString", { link = "String" })
+	vim.api.nvim_set_hl(0, "UDebugToolVariableNumber", { link = "Number" })
+	vim.api.nvim_set_hl(0, "UDebugToolVariableBoolean", { link = "Boolean" })
+	vim.api.nvim_set_hl(0, "UDebugToolVariableConstant", { link = "Constant" })
+	vim.api.nvim_set_hl(0, "UDebugToolCodeFunction", { link = "Function" })
+	vim.api.nvim_set_hl(0, "UDebugToolCodeType", { link = "Type" })
+	vim.api.nvim_set_hl(0, "UDebugToolCodeKeyword", { link = "Keyword" })
+	vim.api.nvim_set_hl(0, "UDebugToolCodeOperator", { link = "Operator" })
+	vim.api.nvim_set_hl(0, "UDebugToolCodeNumber", { link = "Number" })
+	vim.api.nvim_set_hl(0, "UDebugToolCodeString", { link = "String" })
+	vim.api.nvim_set_hl(0, "UDebugToolCodeFile", { link = "Identifier" })
 end
 
 local function short_path(path)
@@ -1003,11 +1016,180 @@ local function file_name(path)
 	return vim.fn.fnamemodify(path, ":t")
 end
 
+local function frame_display_name(frame)
+	local name = tostring(frame and frame.name or "<frame>")
+	local bang = name:find("!", 1, true)
+	if bang and bang < #name then
+		return name:sub(bang + 1)
+	end
+	return name
+end
+
+local cpp_keywords = {
+	["const"] = true,
+	["volatile"] = true,
+	["static"] = true,
+	["class"] = true,
+	["struct"] = true,
+	["enum"] = true,
+	["typename"] = true,
+	["template"] = true,
+	["return"] = true,
+}
+
+local cpp_builtin_types = {
+	["void"] = true,
+	["bool"] = true,
+	["char"] = true,
+	["wchar_t"] = true,
+	["short"] = true,
+	["int"] = true,
+	["long"] = true,
+	["float"] = true,
+	["double"] = true,
+	["signed"] = true,
+	["unsigned"] = true,
+}
+
+local function next_nonspace_char(text, start_idx)
+	for i = start_idx, #text do
+		local ch = text:sub(i, i)
+		if not ch:match("%s") then
+			return ch, i
+		end
+	end
+	return nil, nil
+end
+
+local function is_identifier_char(ch)
+	return ch ~= nil and ch:match("[%w_]")
+end
+
+local function add_cpp_signature_spans(spans, text, start_col)
+	local i = 1
+	while i <= #text do
+		local ch = text:sub(i, i)
+		if ch:match("[%a_]") or ch == "~" then
+			local j = i + 1
+			while j <= #text and is_identifier_char(text:sub(j, j)) do
+				j = j + 1
+			end
+			local token = text:sub(i, j - 1)
+			local next_char = next_nonspace_char(text, j)
+			local group = nil
+			if cpp_keywords[token] then
+				group = "UDebugToolCodeKeyword"
+			elseif cpp_builtin_types[token] then
+				group = "UDebugToolCodeType"
+			elseif next_char == "(" then
+				group = "UDebugToolCodeFunction"
+			elseif token:match("^[A-Z]") or token:find("::", 1, true) then
+				group = "UDebugToolCodeType"
+			end
+			if group then
+				table.insert(spans, {
+					group = group,
+					start_col = start_col + i - 1,
+					end_col = start_col + j - 1,
+				})
+			end
+			i = j
+		elseif ch:match("%d") then
+			local j = i + 1
+			while j <= #text and text:sub(j, j):match("[%d]") do
+				j = j + 1
+			end
+			table.insert(spans, {
+				group = "UDebugToolCodeNumber",
+				start_col = start_col + i - 1,
+				end_col = start_col + j - 1,
+			})
+			i = j
+		elseif ch == '"' or ch == "'" then
+			local quote = ch
+			local j = i + 1
+			while j <= #text and text:sub(j, j) ~= quote do
+				j = j + 1
+			end
+			if j <= #text then
+				j = j + 1
+			end
+			table.insert(spans, {
+				group = "UDebugToolCodeString",
+				start_col = start_col + i - 1,
+				end_col = start_col + j - 1,
+			})
+			i = j
+		elseif ch:match("[%[%]%(%)%{%}%*%&,<>:=~]") then
+			local j = i + 1
+			if j <= #text and (ch .. text:sub(j, j)) == "::" then
+				j = j + 1
+			end
+			table.insert(spans, {
+				group = "UDebugToolCodeOperator",
+				start_col = start_col + i - 1,
+				end_col = start_col + j - 1,
+			})
+			i = j
+		else
+			i = i + 1
+		end
+	end
+end
+
+local function add_frame_location_spans(spans, text, start_col)
+	local colon = text:match("^.*():")
+	if colon then
+		table.insert(spans, {
+			group = "UDebugToolCodeFile",
+			start_col = start_col,
+			end_col = start_col + colon - 1,
+		})
+		table.insert(spans, {
+			group = "UDebugToolCodeOperator",
+			start_col = start_col + colon - 1,
+			end_col = start_col + colon,
+		})
+		table.insert(spans, {
+			group = "UDebugToolCodeNumber",
+			start_col = start_col + colon,
+			end_col = start_col + #text,
+		})
+		return
+	end
+
+	table.insert(spans, {
+		group = "UDebugToolCodeFile",
+		start_col = start_col,
+		end_col = start_col + #text,
+	})
+end
+
+local function value_highlight_group(value)
+	value = vim.trim(tostring(value or ""))
+	if value == "" then
+		return "UDebugToolValue"
+	end
+	if value == "true" or value == "false" then
+		return "UDebugToolVariableBoolean"
+	end
+	if value == "nullptr" or value == "null" or value == "nil" then
+		return "UDebugToolVariableConstant"
+	end
+	if value:match('^".*"$') or value:match("^'.*'$") then
+		return "UDebugToolVariableString"
+	end
+	if value:match("^[-+]?%d") or value:match("^0x[%da-fA-F]+$") then
+		return "UDebugToolVariableNumber"
+	end
+	return "UDebugToolValue"
+end
+
 local function frame_location(frame)
 	local source = frame and frame.source or {}
 	local path = source.path or source.name or "<unknown>"
 	local line = tonumber(frame and frame.line or 0) or 0
-	return string.format("%s:%d", short_path(path), line)
+	return string.format("%s:%d", file_name(path), line)
 end
 
 local function find_source_window()
@@ -1528,8 +1710,28 @@ local function render_variable_tree(builder, session, entry, depth, item_kind, i
 	local name = tostring(entry.name or entry.expression or entry.label or "?")
 	local value = truncate(entry.value or entry.result or "", 72)
 	local text = string.format("%s%s %s", indent, prefix, name)
+	local name_start = #indent + #prefix + 1
+	local operator_start = nil
 	if value ~= "" then
 		text = text .. " = " .. value
+		operator_start = #indent + #prefix + 2 + #name
+	end
+
+	local spans = {
+		{ group = "UDebugToolMuted", start_col = #indent, end_col = #indent + #prefix },
+		{ group = "UDebugToolVariableName", start_col = name_start, end_col = name_start + #name },
+	}
+	if operator_start then
+		table.insert(spans, {
+			group = "UDebugToolVariableOperator",
+			start_col = operator_start,
+			end_col = operator_start + 3,
+		})
+		table.insert(spans, {
+			group = value_highlight_group(value),
+			start_col = operator_start + 3,
+			end_col = -1,
+		})
 	end
 
 	push_line(builder, text, {
@@ -1541,10 +1743,7 @@ local function render_variable_tree(builder, session, entry, depth, item_kind, i
 			name = name,
 			value = entry.value or entry.result or "",
 		}, item_payload or {}) or nil,
-		spans = {
-			{ group = "UDebugToolLabel", start_col = #indent + #prefix + 1, end_col = #indent + #prefix + 2 + #name },
-			{ group = "UDebugToolValue", start_col = #indent + #prefix + 2 + #name, end_col = -1 },
-		},
+		spans = spans,
 	})
 
 	if not (expanded and ref > 0) then
@@ -1678,25 +1877,35 @@ local function render_left(session)
 				else
 					for index, frame in ipairs(frames) do
 						local current = session.current_frame and frame.id == session.current_frame.id
-						push_line(builder, string.format("  %02d %s", index, tostring(frame.name or "<frame>")), {
+						local display_name = frame_display_name(frame)
+						local frame_spans = {
+							{ group = "UDebugToolCodeNumber", start_col = 2, end_col = 4 },
+						}
+						add_cpp_signature_spans(frame_spans, display_name, 5)
+						push_line(builder, string.format("  %02d %s", index, display_name), {
 							group = current and "UDebugToolCurrent" or "UDebugToolValue",
 							item = {
 								kind = "frame",
 								frame = frame,
 								thread_id = thread_id,
-								name = frame.name or "<frame>",
+								name = display_name,
 								value = frame_location(frame),
 							},
+							spans = frame_spans,
 						})
+						local location = frame_location(frame)
+						local location_spans = {}
+						add_frame_location_spans(location_spans, location, 5)
 						push_line(builder, "     " .. frame_location(frame), {
 							group = current and "UDebugToolCurrent" or "UDebugToolMuted",
 							item = {
 								kind = "frame",
 								frame = frame,
 								thread_id = thread_id,
-								name = frame.name or "<frame>",
+								name = display_name,
 								value = frame_location(frame),
 							},
+							spans = location_spans,
 						})
 					end
 				end
@@ -1816,13 +2025,22 @@ local function render_stack_panel(session)
 			else
 				for index, frame in ipairs(frames) do
 					local current = session.current_frame and frame.id == session.current_frame.id
-					push_line(builder, string.format("  %02d %s  %s", index, tostring(frame.name or "<frame>"), frame_location(frame)), {
+					local display_name = frame_display_name(frame)
+					local location = frame_location(frame)
+					local text = string.format("  %02d %s  %s", index, display_name, location)
+					local frame_spans = {
+						{ group = "UDebugToolCodeNumber", start_col = 2, end_col = 4 },
+					}
+					add_cpp_signature_spans(frame_spans, display_name, 5)
+					add_frame_location_spans(frame_spans, location, 5 + #display_name + 2)
+					push_line(builder, text, {
 						group = current and "UDebugToolCurrent" or "UDebugToolValue",
 						item = {
 							kind = "frame",
 							frame = frame,
 							thread_id = thread_id,
 						},
+						spans = frame_spans,
 					})
 				end
 			end
@@ -1952,7 +2170,7 @@ local function render_toolbar(session)
 	elseif state.running then
 		summary = "Running"
 	elseif session.current_frame then
-		summary = "Stopped  |  " .. truncate(tostring(session.current_frame.name or "<frame>"), 28)
+		summary = "Stopped  |  " .. truncate(frame_display_name(session.current_frame), 28)
 	else
 		summary = "Attached"
 	end
@@ -2150,22 +2368,32 @@ local function render_stacks_panel(session)
 				else
 					for index, frame in ipairs(frames) do
 						local current = session.current_frame and frame.id == session.current_frame.id
+						local display_name = frame_display_name(frame)
+						local frame_spans = {
+							{ group = "UDebugToolCodeNumber", start_col = 0, end_col = 2 },
+						}
+						add_cpp_signature_spans(frame_spans, display_name, 3)
 						local item = {
 							kind = "frame",
 							frame = frame,
 							thread_id = thread_id,
-							name = frame.name or "<frame>",
+							name = display_name,
 							value = frame_location(frame),
 						}
-						push_line(builder, string.format("%02d %s", index, tostring(frame.name or "<frame>")), {
+						push_line(builder, string.format("%02d %s", index, display_name), {
 							group = current and "UDebugToolCurrent" or "UDebugToolValue",
 							padding = 2,
 							item = item,
+							spans = frame_spans,
 						})
+						local location = frame_location(frame)
+						local location_spans = {}
+						add_frame_location_spans(location_spans, location, 0)
 						push_line(builder, frame_location(frame), {
 							group = current and "UDebugToolMarker" or "UDebugToolMuted",
 							padding = 3,
 							item = item,
+							spans = location_spans,
 						})
 					end
 				end
@@ -2316,22 +2544,32 @@ render_controls_panel = function(session)
 		else
 			for index, frame in ipairs(frames) do
 				local current = session.current_frame and frame.id == session.current_frame.id
+				local display_name = frame_display_name(frame)
+				local frame_spans = {
+					{ group = "UDebugToolCodeNumber", start_col = 0, end_col = 2 },
+				}
+				add_cpp_signature_spans(frame_spans, display_name, 3)
 				local item = {
 					kind = "frame",
 					frame = frame,
 					thread_id = thread_id,
-					name = frame.name or "<frame>",
+					name = display_name,
 					value = frame_location(frame),
 				}
-				push_line(builder, string.format("%02d %s", index, tostring(frame.name or "<frame>")), {
+				push_line(builder, string.format("%02d %s", index, display_name), {
 					group = current and "UDebugToolCurrent" or "UDebugToolValue",
 					padding = 1,
 					item = item,
+					spans = frame_spans,
 				})
+				local location = frame_location(frame)
+				local location_spans = {}
+				add_frame_location_spans(location_spans, location, 0)
 				push_line(builder, frame_location(frame), {
 					group = current and "UDebugToolMarker" or "UDebugToolMuted",
 					padding = 2,
 					item = item,
+					spans = location_spans,
 				})
 			end
 		end
@@ -2701,7 +2939,7 @@ function M.activate_current_item(slot_name)
 	if item.kind == "frame" and item.frame and state.session then
 		state.selected_item = {
 			kind = "frame",
-			name = item.frame.name or "<frame>",
+			name = frame_display_name(item.frame),
 			value = frame_location(item.frame),
 			frame = item.frame,
 		}
