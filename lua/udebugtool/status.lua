@@ -22,6 +22,12 @@ local float_state = {
 	win = nil,
 }
 
+local function uses_builtin_notify()
+	local info = debug.getinfo(vim.notify, "S")
+	local source = tostring(info and info.source or "")
+	return source:find("vim/_core/editor.lua", 1, true) ~= nil
+end
+
 local function panel_has_spinner_items()
 	for key, active in pairs(panel.spinner_active_keys) do
 		if active and panel.items[key] then
@@ -181,7 +187,7 @@ local function render_notify()
 end
 
 local function render_now()
-	if #vim.api.nvim_list_uis() > 0 then
+	if uses_builtin_notify() then
 		render_float()
 		return
 	end

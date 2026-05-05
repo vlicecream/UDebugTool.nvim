@@ -12,6 +12,8 @@ local ns = vim.api.nvim_create_namespace("udebugtool_debug_ui")
 local PANEL_PADDING = 2
 local CONTENT_PADDING = 4
 local GRID_BORDER_OVERLAP = 1
+local DEBUG_PANEL_ZINDEX = 40
+local DEBUG_INNER_ZINDEX = 41
 
 local state = {
 	left = { win = nil, buf = nil, items = {} },
@@ -524,7 +526,7 @@ local function open_toolbar()
 		style = "minimal",
 		border = "rounded",
 		focusable = false,
-		zindex = 70,
+		zindex = DEBUG_PANEL_ZINDEX,
 		noautocmd = true,
 	}
 
@@ -588,7 +590,7 @@ local function float_win_config(row, col, width, height, title, border)
 		style = "minimal",
 		border = border or "single",
 		focusable = true,
-		zindex = 70,
+		zindex = DEBUG_PANEL_ZINDEX,
 		noautocmd = true,
 		title = title,
 		title_pos = title and "center" or nil,
@@ -760,7 +762,7 @@ local function inner_win_config(row, col, width, height, focusable)
 		style = "minimal",
 		border = "none",
 		focusable = focusable == true,
-		zindex = 71,
+		zindex = DEBUG_INNER_ZINDEX,
 		noautocmd = true,
 	}
 end

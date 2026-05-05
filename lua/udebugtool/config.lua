@@ -34,6 +34,12 @@ local defaults = {
 		autosave_before_launch = true,
 		build_before_launch = true,
 		redirect_header_breakpoints = true,
+		focus = {
+			on_stopped = true,
+			restore_minimized = true,
+			bring_to_front = true,
+			topmost_ms = 800,
+		},
 		adapter = {
 			auto_install = true,
 			package = "cpptools",
