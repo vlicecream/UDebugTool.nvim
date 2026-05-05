@@ -2128,7 +2128,7 @@ apply_breakpoint_sign_style = function()
 	define_or_update_sign("UDebugToolBreakpointActiveOverlay", {
 		text = "●",
 		texthl = "UDebugToolBreakpointMarker",
-		linehl = "UDebugToolBreakpointLine",
+		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("UDebugToolBreakpointMutedOverlay", {
@@ -2142,7 +2142,6 @@ end
 local function setup_debug_marker_signs()
 	vim.api.nvim_set_hl(0, "UDebugToolBreakpointMarker", { fg = "#F44747", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolBreakpointMutedMarker", { fg = "#6B7280", bold = true })
-	vim.api.nvim_set_hl(0, "UDebugToolBreakpointLine", { bg = "#3B0D12" })
 	vim.api.nvim_set_hl(0, "UDebugToolStoppedMarker", { fg = "#FBBF24", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolStoppedLine", { bg = "#3A2C00" })
 
