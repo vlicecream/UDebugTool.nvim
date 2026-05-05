@@ -14,7 +14,7 @@ local function register_default_keymaps()
 	local mappings = {
 		{ keymaps.attach, debug.attach, "UDebugTool attach" },
 		{ keymaps.editor, debug.launch, "UDebugTool launch configured target" },
-		{ keymaps.breakpoint, debug.toggle_breakpoint, "UDebugTool breakpoint" },
+		{ keymaps.breakpoint, debug.toggle_breakpoint, "UDebugTool breakpoint", nowait = true },
 		{ keymaps.breakpoint_mute, debug.toggle_breakpoint_mute, "UDebugTool mute breakpoint" },
 		{ keymaps.breakpoints_toggle, debug.toggle_breakpoints_enabled, "UDebugTool toggle breakpoints" },
 		{ keymaps.continue, debug.continue, "UDebugTool continue" },
@@ -29,6 +29,7 @@ local function register_default_keymaps()
 			vim.keymap.set("n", item[1], item[2], {
 				silent = true,
 				desc = item[3],
+				nowait = item.nowait == true,
 			})
 			table.insert(registered_keymaps, item[1])
 		end
