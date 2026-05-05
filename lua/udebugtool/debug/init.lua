@@ -2217,9 +2217,9 @@ local function display_sign_name()
 	end
 
 	vim.fn.sign_define("UDebugToolBreakpoint", {
-		text = " ",
-		texthl = "",
-		linehl = "",
+		text = "●",
+		texthl = "UDebugToolBreakpointMarker",
+		linehl = "UDebugToolBreakpointLine",
 		numhl = "",
 	})
 	return "UDebugToolBreakpoint"
@@ -2252,33 +2252,33 @@ end
 
 apply_breakpoint_sign_style = function()
 	define_or_update_sign("UDebugToolBreakpoint", {
-		text = " ",
-		texthl = "",
-		linehl = "",
+		text = "●",
+		texthl = "UDebugToolBreakpointMarker",
+		linehl = "UDebugToolBreakpointLine",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpoint", {
-		text = " ",
-		texthl = "",
-		linehl = "",
+		text = "●",
+		texthl = "UDebugToolBreakpointMarker",
+		linehl = "UDebugToolBreakpointLine",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpointCondition", {
-		text = " ",
-		texthl = "",
-		linehl = "",
+		text = "●",
+		texthl = "UDebugToolBreakpointMarker",
+		linehl = "UDebugToolBreakpointLine",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpointRejected", {
-		text = " ",
-		texthl = "",
-		linehl = "",
+		text = "●",
+		texthl = "UDebugToolBreakpointMarker",
+		linehl = "UDebugToolBreakpointLine",
 		numhl = "",
 	})
 	define_or_update_sign("DapLogPoint", {
-		text = " ",
-		texthl = "",
-		linehl = "",
+		text = "◆",
+		texthl = "UDebugToolBreakpointMarker",
+		linehl = "UDebugToolBreakpointLine",
 		numhl = "",
 	})
 	define_or_update_sign("UDebugToolBreakpointActiveOverlay", {
@@ -2475,11 +2475,13 @@ sync_breakpoint_overlays = function(root)
 	local overlays = {}
 	for _, item in ipairs(items) do
 		local muted = breakpoint_is_muted(root, item)
-		local display_bufnr, display_sign_id = place_overlay_sign(item.display_path, item.display_line, muted)
-		if display_bufnr and display_sign_id then
-			table.insert(overlays, { bufnr = display_bufnr, sign_id = display_sign_id })
+		if muted then
+			local display_bufnr, display_sign_id = place_overlay_sign(item.display_path, item.display_line, true)
+			if display_bufnr and display_sign_id then
+				table.insert(overlays, { bufnr = display_bufnr, sign_id = display_sign_id })
+			end
 		end
-		if item.redirected and normalize(item.actual_path) ~= normalize(item.display_path) then
+		if item.redirected and normalize(item.actual_path) ~= normalize(item.display_path) and muted then
 			local actual_bufnr, actual_sign_id = place_overlay_sign(item.actual_path, item.actual_line, muted)
 			if actual_bufnr and actual_sign_id then
 				table.insert(overlays, { bufnr = actual_bufnr, sign_id = actual_sign_id })
