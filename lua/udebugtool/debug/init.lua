@@ -2061,8 +2061,8 @@ local function display_sign_name()
 	end
 
 	vim.fn.sign_define("UDebugToolBreakpoint", {
-		text = "●",
-		texthl = "UDebugToolBreakpointMarker",
+		text = " ",
+		texthl = "",
 		linehl = "",
 		numhl = "",
 	})
@@ -2096,32 +2096,32 @@ end
 
 apply_breakpoint_sign_style = function()
 	define_or_update_sign("UDebugToolBreakpoint", {
-		text = "●",
-		texthl = "UDebugToolBreakpointMarker",
+		text = " ",
+		texthl = "",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpoint", {
-		text = "●",
-		texthl = "UDebugToolBreakpointMarker",
+		text = " ",
+		texthl = "",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpointCondition", {
-		text = "●",
-		texthl = "UDebugToolBreakpointMarker",
+		text = " ",
+		texthl = "",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapBreakpointRejected", {
-		text = "○",
-		texthl = "UDebugToolBreakpointMutedMarker",
+		text = " ",
+		texthl = "",
 		linehl = "",
 		numhl = "",
 	})
 	define_or_update_sign("DapLogPoint", {
-		text = "◆",
-		texthl = "UDebugToolBreakpointMarker",
+		text = " ",
+		texthl = "",
 		linehl = "",
 		numhl = "",
 	})
