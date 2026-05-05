@@ -3279,7 +3279,12 @@ function M.log()
 end
 
 function M.toggle_breakpoint()
-	return M.toggle_breakpoint_with_opts({})
+	if not dap_available() then
+		return notify_missing_dap()
+	end
+
+	require("dap").toggle_breakpoint()
+	refresh_debug_ui_breakpoints()
 end
 
 function M.toggle_breakpoint_with_opts(opts)
