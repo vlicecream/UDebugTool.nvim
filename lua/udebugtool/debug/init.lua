@@ -3716,9 +3716,6 @@ function M.setup()
 							if stop_frame_is_meaningful(frame) then
 								jump_to_frame(frame)
 							end
-							pcall(function()
-								require("udebugtool.debug.winfocus").bring_to_front()
-							end)
 						end
 						if auto_open_ui_enabled() or debug_ui.is_open() then
 							debug_ui.refresh(session)
