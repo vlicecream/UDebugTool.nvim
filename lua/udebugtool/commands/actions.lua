@@ -10,8 +10,16 @@ function M.dashboard()
 	debug.dashboard()
 end
 
+function M.launch()
+	debug.launch()
+end
+
 function M.editor()
 	debug.launch_editor()
+end
+
+function M.game()
+	debug.launch_game()
 end
 
 function M.breakpoint()
@@ -46,18 +54,15 @@ function M.step_out()
 	debug.step_out()
 end
 
-function M.log()
-	debug.log()
-end
-
 function M.help()
 	print([[
 UDebugTool commands:
 
   :UDebugTool dashboard    Open / focus the debug dashboard
-  :UDebugTool log          Focus Unreal / debug logs
+  :UDebugTool launch       Launch the configured startup target under debugger
   :UDebugTool attach       Attach to the current Unreal process
   :UDebugTool editor       Build and launch Unreal Editor under debugger
+  :UDebugTool game         Build and launch Unreal Game under debugger
   :UDebugTool breakpoint   Toggle a breakpoint at the cursor
   :UDebugTool breakpoint-mute   Toggle current breakpoint on / off
   :UDebugTool breakpoints-toggle   Toggle all breakpoints on / off

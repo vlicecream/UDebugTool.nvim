@@ -9,7 +9,7 @@ Standalone Unreal Engine debugging for Neovim.
 - automatic `vsda.node` signer provisioning
 - Mason-based `cpptools` install fallback when available
 - attach to running Unreal processes
-- build + launch Unreal Editor under debugger
+- build + launch Unreal Editor or Game under debugger
 - breakpoint persistence per project
 - header declaration breakpoint redirection to `.cpp`
 - a built-in multi-pane debug workspace
@@ -42,8 +42,10 @@ Optional but recommended:
 
 ```vim
 :UDebugTool
+:UDebugTool launch
 :UDebugTool attach
 :UDebugTool editor
+:UDebugTool game
 :UDebugTool breakpoint
 :UDebugTool continue
 :UDebugTool stop
@@ -57,7 +59,7 @@ Optional but recommended:
 
 ```text
 ga          attach
-ge          build + launch Unreal Editor under debugger
+ge          launch configured debug startup target
 <leader>db  toggle breakpoint
 <leader>dc  continue / attach / launch
 <leader>ds  stop
@@ -95,6 +97,13 @@ q     close the debug workspace
 require("udebugtool").setup({
   cache_dir = vim.fn.stdpath("cache") .. "/udebugtool",
   engine_roots = {},
+  startup = {
+    mode = "editor", -- "editor" | "game"
+    configuration = "Development", -- use "DebugGame" / "Debug" for debug-style builds
+    platform = "Win64",
+    editor_target = nil,
+    game_target = nil,
+  },
   debug = {
     enable = true,
     autosave_before_launch = true,
@@ -120,10 +129,18 @@ require("udebugtool").setup({
 })
 ```
 
+`startup.mode` only controls whether debug launch opens `editor` or `game`.
+
+If you want what you call "debug mode", set `startup.configuration` to `DebugGame` or `Debug`. Do not put that into `startup.mode`.
+
 ## Notes
 
 - Windows is the primary target.
 - Breakpoints are stored under `stdpath("cache")/udebugtool/projects/<project-hash>/breakpoints.json`.
 - Watch expressions are stored per project under `stdpath("cache")/udebugtool/projects/<project-hash>/watches.json`.
-- `continue` attaches to an existing Unreal process when possible, otherwise it launches Unreal Editor for the current project.
+- `launch` uses this plugin's own debug startup config. It does not read `UBuildTool.nvim` config.
+- `editor` always forces Unreal Editor launch under debugger, ignoring `startup.mode`.
+- `game` always forces Unreal Game launch under debugger, ignoring `startup.mode`.
+- `build` defaults used during debug launch come from `startup.configuration`, `startup.platform`, and the mode-specific target.
+- `continue` attaches to an existing Unreal process when possible, otherwise it launches the configured debug startup target for the current project.
 - when `UCore.nvim` is loaded, adapter install progress, build output, launch flow, and debug session state changes are mirrored into the shared bottom output workspace

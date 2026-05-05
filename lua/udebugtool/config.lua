@@ -3,6 +3,13 @@ local M = {}
 local defaults = {
 	cache_dir = vim.fn.stdpath("cache") .. "/udebugtool",
 	engine_roots = {},
+	startup = {
+		mode = "editor",
+		configuration = "Development",
+		platform = "Win64",
+		editor_target = nil,
+		game_target = nil,
+	},
 	keymaps = {
 		enable = true,
 		attach = "<leader>da",

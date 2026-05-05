@@ -2011,6 +2011,30 @@ local function project_context(root)
 	}, nil
 end
 
+local function launch_context(root, mode_override)
+	local profile, err = unreal.launch_profile(root, mode_override)
+	if not profile then
+		return nil, err
+	end
+
+	local editor = unreal.editor_executable(profile.engine_root)
+	return {
+		root = normalize(profile.root),
+		uproject = normalize(profile.uproject),
+		project_name = profile.project_name,
+		engine_root = normalize(profile.engine_root),
+		editor_exe = normalize(editor),
+		mode = profile.mode,
+		target = profile.target,
+		platform = profile.platform,
+		configuration = profile.configuration,
+		program = normalize(profile.program),
+		program_args = vim.deepcopy(profile.program_args or {}),
+		display_name = profile.display_name,
+		uses_editor_fallback = profile.uses_editor_fallback == true,
+	}, nil
+end
+
 local function belongs_to_context(path, ctx)
 	path = lower(normalize(path))
 	if path == "" then
@@ -2776,13 +2800,17 @@ local function enumerate_processes(ctx, callback)
 	end)
 end
 
-local function spawn_editor_process(ctx, callback)
+local function spawn_runtime_process(ctx, callback)
 	local ps = vim.fn.executable("pwsh") == 1 and "pwsh" or "powershell"
+	local args = {}
+	for _, arg in ipairs(ctx.program_args or {}) do
+		table.insert(args, ps_quote(arg))
+	end
 	local script = table.concat({
 		"$proc = Start-Process -FilePath '"
-			.. tostring(ctx.editor_exe):gsub("'", "''")
+			.. tostring(ctx.program):gsub("'", "''")
 			.. "' -ArgumentList @("
-			.. ps_quote(ctx.uproject)
+			.. table.concat(args, ", ")
 			.. ") -WorkingDirectory '"
 			.. tostring(ctx.root):gsub("'", "''")
 			.. "' -PassThru",
@@ -2801,14 +2829,14 @@ local function spawn_editor_process(ctx, callback)
 			if result.code ~= 0 then
 				local err = vim.trim(result.stderr ~= "" and result.stderr or result.stdout or "")
 				if err == "" then
-					err = "failed to launch UnrealEditor.exe"
+					err = "failed to launch " .. tostring(ctx.display_name or "Unreal process")
 				end
 				return callback(nil, err)
 			end
 
 			local pid = tonumber(vim.trim(result.stdout or ""))
 			if not pid or pid <= 0 then
-				return callback(nil, "failed to resolve Unreal Editor process id")
+				return callback(nil, "failed to resolve " .. tostring(ctx.display_name or "Unreal process") .. " id")
 			end
 
 			callback(pid, nil)
@@ -2816,7 +2844,7 @@ local function spawn_editor_process(ctx, callback)
 	end)
 end
 
-local function wait_for_editor_attach_target(ctx, preferred_pid, callback)
+local function wait_for_attach_target(ctx, preferred_pid, callback)
 	local deadline = vim.loop.hrtime() + (30 * 1e9)
 	local timer = vim.loop.new_timer()
 	local done = false
@@ -2838,7 +2866,7 @@ local function wait_for_editor_attach_target(ctx, preferred_pid, callback)
 		if vim.loop.hrtime() >= deadline then
 			return finish(
 				nil,
-				"timed out waiting for the launched Unreal Editor process. The editor may still be waiting for debugger attach."
+				"timed out waiting for the launched " .. tostring(ctx.display_name or "Unreal process") .. ". It may still be waiting for debugger attach."
 			)
 		end
 
@@ -2965,21 +2993,21 @@ function M.pick_process()
 	end)
 end
 
-function M.launch_editor()
+function M.launch(mode_override)
 	if not dap_available() then
 		return notify_missing_dap()
 	end
 
 	if state.launch_in_progress then
-		return vim.notify("UDebugTool: Unreal Editor launch already in progress", vim.log.levels.INFO)
+		return vim.notify("UDebugTool: launch already in progress", vim.log.levels.INFO)
 	end
 
-	local ctx, err = project_context()
+	local ctx, err = launch_context(nil, mode_override)
 	if not ctx then
 		return vim.notify("UDebugTool: " .. tostring(err), vim.log.levels.ERROR)
 	end
-	if not ctx.editor_exe or vim.fn.filereadable(ctx.editor_exe) ~= 1 then
-		return vim.notify("UDebugTool: UnrealEditor.exe was not found", vim.log.levels.ERROR)
+	if not ctx.program or vim.fn.filereadable(ctx.program) ~= 1 then
+		return vim.notify("UDebugTool: launch program was not found", vim.log.levels.ERROR)
 	end
 
 	restore_project_breakpoints(ctx.root)
@@ -2990,7 +3018,7 @@ function M.launch_editor()
 
 		state.launch_in_progress = true
 		local function do_launch(launch_ctx)
-			spawn_editor_process(launch_ctx, function(launch_pid, launch_err)
+			spawn_runtime_process(launch_ctx, function(launch_pid, launch_err)
 				if launch_err then
 					state.launch_in_progress = false
 					stop_unreal_log_tail()
@@ -3000,12 +3028,15 @@ function M.launch_editor()
 				open_unreal_output(launch_ctx.root, {
 					"Project: " .. tostring(launch_ctx.project_name or ""),
 					"Engine:  " .. tostring(launch_ctx.engine_root or ""),
-					"Editor:  " .. tostring(launch_ctx.editor_exe or ""),
+					"Mode:    " .. tostring(launch_ctx.mode or ""),
+					"Target:  " .. tostring(launch_ctx.target or ""),
+					"Program: " .. tostring(launch_ctx.program or ""),
 					"",
-					"Starting Unreal Editor...",
+					"Starting " .. tostring(launch_ctx.display_name or "Unreal") .. "...",
 				}, {
 					focus = true,
 					line_groups = {
+						"UCoreOutputCommand",
 						"UCoreOutputCommand",
 						"UCoreOutputCommand",
 						"UCoreOutputCommand",
@@ -3017,14 +3048,14 @@ function M.launch_editor()
 				start_unreal_log_tail(launch_ctx)
 
 				vim.notify(
-					"UDebugTool: launched Unreal Editor (" .. tostring(launch_pid) .. "), waiting to attach",
+					"UDebugTool: launched " .. tostring(launch_ctx.display_name or "Unreal") .. " (" .. tostring(launch_pid) .. "), waiting to attach",
 					vim.log.levels.INFO
 				)
-				append_debug_output(launch_ctx.root, "Launched Unreal Editor (" .. tostring(launch_pid) .. "), waiting to attach", {
+				append_debug_output(launch_ctx.root, "Launched " .. tostring(launch_ctx.display_name or "Unreal") .. " (" .. tostring(launch_pid) .. "), waiting to attach", {
 					focus = true,
 					group = "UCoreOutputCommand",
 				})
-				wait_for_editor_attach_target(launch_ctx, launch_pid, function(process, wait_err)
+				wait_for_attach_target(launch_ctx, launch_pid, function(process, wait_err)
 					state.launch_in_progress = false
 					if not process then
 						append_debug_output(launch_ctx.root, tostring(wait_err), {
@@ -3043,28 +3074,36 @@ function M.launch_editor()
 			return do_launch(ctx)
 		end
 
-		vim.notify("UDebugTool: building Unreal Editor target before launch", vim.log.levels.INFO)
+		vim.notify("UDebugTool: building " .. tostring(ctx.target or "") .. " before launch", vim.log.levels.INFO)
 		unreal.build_async("", function(ok, result, build_ctx)
 			if not ok then
 				state.launch_in_progress = false
 				if result ~= "cancelled" then
-					vim.notify("UDebugTool: build failed, not launching Unreal Editor", vim.log.levels.ERROR)
+					vim.notify("UDebugTool: build failed, not launching " .. tostring(ctx.display_name or "Unreal"), vim.log.levels.ERROR)
 					stop_unreal_log_tail()
 				end
 				return
 			end
 
-			local refreshed_ctx = build_ctx and project_context(build_ctx.root) or project_context(ctx.root)
+			local refreshed_ctx = build_ctx and launch_context(build_ctx.root, ctx.mode) or launch_context(ctx.root, ctx.mode)
 			local launch_ctx = refreshed_ctx or ctx
-			if not launch_ctx.editor_exe or vim.fn.filereadable(launch_ctx.editor_exe) ~= 1 then
+			if not launch_ctx.program or vim.fn.filereadable(launch_ctx.program) ~= 1 then
 				state.launch_in_progress = false
 				stop_unreal_log_tail()
-				return vim.notify("UDebugTool: UnrealEditor.exe was not found after build", vim.log.levels.ERROR)
+				return vim.notify("UDebugTool: launch program was not found after build", vim.log.levels.ERROR)
 			end
 
 			do_launch(launch_ctx)
-		end)
+		end, ctx.mode)
 	end)
+end
+
+function M.launch_editor()
+	return M.launch("editor")
+end
+
+function M.launch_game()
+	return M.launch("game")
 end
 
 function M.continue()
@@ -3087,7 +3126,7 @@ function M.continue()
 		if items and not vim.tbl_isempty(items) then
 			return attach_with_process(items[1], ctx)
 		end
-		M.launch_editor()
+		M.launch()
 	end)
 end
 

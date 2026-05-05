@@ -288,6 +288,26 @@ function M.editor_target_name(root)
 	return fallback or preferred
 end
 
+function M.game_target_name(root)
+	local base_name = M.project_name(root)
+	local candidates = vim.fn.glob(path_join(root, "Source/*.Target.cs"), false, true)
+	local fallback = nil
+
+	for _, path in ipairs(candidates) do
+		local name = tostring(path):match("([^/\\]+)%.Target%.cs$")
+		if name then
+			if name == base_name then
+				return base_name
+			end
+			if not name:match("Editor$") and not name:match("Server$") and not name:match("Client$") and not fallback then
+				fallback = name
+			end
+		end
+	end
+
+	return fallback or base_name
+end
+
 function M.build_paths(project_root)
 	local cache_dir = normalize(config.values.cache_dir)
 	local project_cache_dir = path_join(cache_dir, "projects", project_cache_name(project_root))

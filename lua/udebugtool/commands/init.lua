@@ -11,8 +11,10 @@ function M.dispatch(args)
 	local sub = normalize_subcommand(args)
 	local handlers = {
 		dashboard = actions.dashboard,
+		launch = actions.launch,
 		attach = actions.attach,
 		editor = actions.editor,
+		game = actions.game,
 		breakpoint = actions.breakpoint,
 		["breakpoint-mute"] = actions.breakpoint_mute,
 		["breakpoints-toggle"] = actions.breakpoints_toggle,
@@ -42,8 +44,10 @@ function M.register()
 		complete = function(arglead)
 			local items = {
 				"dashboard",
+				"launch",
 				"attach",
 				"editor",
+				"game",
 				"breakpoint",
 				"breakpoint-mute",
 				"breakpoints-toggle",

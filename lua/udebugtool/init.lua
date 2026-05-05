@@ -13,7 +13,7 @@ local function register_default_keymaps()
 	local debug = require("udebugtool.debug")
 	local mappings = {
 		{ keymaps.attach, debug.attach, "UDebugTool attach" },
-		{ keymaps.editor, debug.launch_editor, "UDebugTool debug editor" },
+		{ keymaps.editor, debug.launch, "UDebugTool launch configured target" },
 		{ keymaps.breakpoint, debug.toggle_breakpoint, "UDebugTool breakpoint" },
 		{ keymaps.breakpoint_mute, debug.toggle_breakpoint_mute, "UDebugTool mute breakpoint" },
 		{ keymaps.breakpoints_toggle, debug.toggle_breakpoints_enabled, "UDebugTool toggle breakpoints" },

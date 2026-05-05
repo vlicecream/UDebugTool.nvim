@@ -16,6 +16,7 @@ local build_ns = vim.api.nvim_create_namespace("udebugtool_build_log")
 local highlights_setup = false
 local build_output = nil
 local on_build_line
+local current_context
 
 local function shared_output_panel()
 	local panel = rawget(_G, "__ucore_output_panel_api")
@@ -124,7 +125,113 @@ function M.editor_executable(engine_root)
 	return editor_exe(engine_root)
 end
 
-local function current_context(root)
+local function normalize_startup_mode(mode)
+	mode = tostring(mode or ""):lower()
+	if mode == "game" then
+		return "game"
+	end
+	return "editor"
+end
+
+local function startup_defaults(ctx, mode_override)
+	local startup = config.values.startup or {}
+	local mode = normalize_startup_mode(mode_override or startup.mode)
+	local target
+
+	if mode == "game" then
+		target = startup.game_target or project.game_target_name(ctx.root)
+	else
+		target = startup.editor_target or project.editor_target_name(ctx.root)
+	end
+
+	return {
+		mode = mode,
+		configuration = startup.configuration or "Development",
+		platform = startup.platform or "Win64",
+		target = target,
+	}
+end
+
+function M.startup_profile(root, mode_override)
+	local ctx, err = current_context(root)
+	if not ctx then
+		return nil, err
+	end
+
+	local defaults = startup_defaults(ctx, mode_override)
+	return vim.tbl_extend("force", ctx, defaults), nil
+end
+
+local function game_exe_candidates(root, target, platform, configuration, project_name)
+	local base = normalize(root .. "/Binaries/" .. tostring(platform))
+	local items = {
+		normalize(base .. "/" .. tostring(target) .. ".exe"),
+		normalize(base .. "/" .. tostring(target) .. "-" .. tostring(platform) .. "-" .. tostring(configuration) .. ".exe"),
+	}
+
+	if project_name and project_name ~= "" and project_name ~= target then
+		table.insert(items, normalize(base .. "/" .. tostring(project_name) .. ".exe"))
+		table.insert(items, normalize(base .. "/" .. tostring(project_name) .. "-" .. tostring(platform) .. "-" .. tostring(configuration) .. ".exe"))
+	end
+
+	return items
+end
+
+function M.game_executable(root, opts)
+	opts = opts or {}
+	local target = opts.target or project.game_target_name(root)
+	local platform = opts.platform or "Win64"
+	local configuration = opts.configuration or "Development"
+	local project_name = opts.project_name or project.project_name(root)
+
+	for _, path in ipairs(game_exe_candidates(root, target, platform, configuration, project_name)) do
+		if executable(path) then
+			return path
+		end
+	end
+
+	return nil
+end
+
+function M.launch_profile(root, mode_override)
+	local profile, err = M.startup_profile(root, mode_override)
+	if not profile then
+		return nil, err
+	end
+
+	if profile.mode == "game" then
+		local game_exe = M.game_executable(profile.root, profile)
+		if game_exe then
+			profile.program = game_exe
+			profile.program_args = {}
+			profile.display_name = "Unreal Game"
+			return profile, nil
+		end
+
+		local editor = editor_exe(profile.engine_root)
+		if not editor then
+			return nil, "Unreal game executable was not found and UnrealEditor.exe fallback is unavailable"
+		end
+
+		profile.program = editor
+		profile.program_args = { profile.uproject, "-game" }
+		profile.display_name = "Unreal Game"
+		profile.uses_editor_fallback = true
+		return profile, nil
+	end
+
+	local editor = editor_exe(profile.engine_root)
+	if not editor then
+		return nil, "UnrealEditor.exe was not found"
+	end
+
+	profile.program = editor
+	profile.program_args = { profile.uproject }
+	profile.display_name = "Unreal Editor"
+	return profile, nil
+end
+
+function current_context(root)
 	root = root or project.find_project_root_from_context()
 	if not root then
 		return nil, "Could not find .uproject"
@@ -177,7 +284,7 @@ local function build_command(ctx, opts)
 		return nil, "Build.bat not found: " .. tostring(bat)
 	end
 
-	local target = opts.target or (ctx.project_name .. "Editor")
+	local target = opts.target or project.editor_target_name(ctx.root)
 	local platform = opts.platform or "Win64"
 	local configuration = opts.configuration or "Development"
 	local script = table.concat({
@@ -193,16 +300,18 @@ local function build_command(ctx, opts)
 	return { powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script }, nil
 end
 
-local function parse_build_args(args, ctx)
+local function parse_build_args(args, ctx, mode_override)
 	args = vim.trim(args or "")
 	local tokens = {}
 	for token in args:gmatch("%S+") do
 		table.insert(tokens, token)
 	end
+	local defaults = startup_defaults(ctx, mode_override)
 	return {
-		configuration = tokens[1] or "Development",
-		platform = tokens[2] or "Win64",
-		target = tokens[3] or (ctx.project_name .. "Editor"),
+		mode = defaults.mode,
+		configuration = tokens[1] or defaults.configuration,
+		platform = tokens[2] or defaults.platform,
+		target = tokens[3] or defaults.target,
 	}
 end
 
@@ -458,7 +567,7 @@ local function reset_diagnostics()
 	build_cancelled = false
 end
 
-local function start_build(args, callback)
+local function start_build(args, callback, mode_override)
 	callback = callback or function() end
 
 	if build_job then
@@ -476,7 +585,7 @@ local function start_build(args, callback)
 		save_modified_project_buffers(ctx.root)
 	end
 
-	local opts = parse_build_args(args, ctx)
+	local opts = parse_build_args(args, ctx, mode_override)
 	local cmd, cmd_err = build_command(ctx, opts)
 	if not cmd then
 		vim.notify(tostring(cmd_err), vim.log.levels.ERROR)
@@ -589,8 +698,8 @@ function M.build(args)
 	start_build(args)
 end
 
-function M.build_async(args, callback)
-	start_build(args, callback)
+function M.build_async(args, callback, mode_override)
+	start_build(args, callback, mode_override)
 end
 
 function M.cancel_build()
