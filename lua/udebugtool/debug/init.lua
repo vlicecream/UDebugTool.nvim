@@ -2364,6 +2364,7 @@ local function sync_active_session_breakpoints(root)
 
 	local session = require("dap").session()
 	if not session then
+		sync_breakpoint_overlays(root)
 		return
 	end
 
