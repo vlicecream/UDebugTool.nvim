@@ -641,6 +641,64 @@ local function cache_dir()
 	return normalize((config.values or {}).cache_dir or (vim.fn.stdpath("cache") .. "/udebugtool"))
 end
 
+local function breakpoint_debug_log_path()
+	return path_join(cache_dir(), "breakpoint-sync.log")
+end
+
+local function breakpoint_snapshot_summary(root)
+	if not dap_available() then
+		return "dap=unavailable"
+	end
+
+	local actual_count = 0
+	for _, buf_breakpoints in pairs(require("dap.breakpoints").get()) do
+		actual_count = actual_count + #buf_breakpoints
+	end
+
+	local redirected_count = 0
+	for _, entry in pairs(state.redirected) do
+		if not root or entry.project_root == root then
+			redirected_count = redirected_count + 1
+		end
+	end
+
+	local overlay_count = 0
+	for _, entry in ipairs(state.breakpoint_overlays[root or ""] or {}) do
+		if entry.bufnr and entry.sign_id then
+			overlay_count = overlay_count + 1
+		end
+	end
+
+	return string.format(
+		"root=%s actual=%d redirected=%d overlays=%d inflight=%s gen=%d",
+		tostring(root or ""),
+		actual_count,
+		redirected_count,
+		overlay_count,
+		tostring(state.breakpoint_toggle_inflight == true),
+		tonumber(state.breakpoint_sync_generation or 0) or 0
+	)
+end
+
+local function log_breakpoint_debug(stage, root, extra)
+	local path = breakpoint_debug_log_path()
+	local parent = vim.fn.fnamemodify(path, ":p:h")
+	if parent and parent ~= "" then
+		vim.fn.mkdir(parent, "p")
+	end
+
+	local parts = {
+		os.date("%Y-%m-%d %H:%M:%S"),
+		tostring(stage or "stage"),
+		breakpoint_snapshot_summary(root),
+	}
+	if extra and extra ~= "" then
+		table.insert(parts, tostring(extra))
+	end
+
+	pcall(vim.fn.writefile, { table.concat(parts, " | ") }, path, "a")
+end
+
 local function adapter_staging_dir()
 	return path_join(mason_install_root(), "staging", adapter_package_name())
 end
@@ -2363,13 +2421,16 @@ end
 local function with_breakpoint_toggle(root, work)
 	root = root or active_root()
 	if state.breakpoint_toggle_inflight then
+		log_breakpoint_debug("toggle_skipped_inflight", root)
 		return vim.notify("UDebugTool: breakpoint update still syncing", vim.log.levels.INFO)
 	end
 
 	state.breakpoint_toggle_inflight = true
+	log_breakpoint_debug("toggle_begin", root)
 
 	local function done()
 		state.breakpoint_toggle_inflight = false
+		log_breakpoint_debug("toggle_done", root)
 	end
 
 	local ok, result = xpcall(function()
@@ -2395,12 +2456,14 @@ end
 
 local function apply_breakpoint_snapshot(root, generation, callback)
 	if generation ~= current_breakpoint_sync_generation() then
+		log_breakpoint_debug("snapshot_stale", root, "generation=" .. tostring(generation))
 		if callback then
 			callback(false)
 		end
 		return
 	end
 
+	log_breakpoint_debug("snapshot_apply", root, "generation=" .. tostring(generation))
 	sync_breakpoint_overlays(root)
 	refresh_debug_ui_breakpoints()
 	if callback then
@@ -2417,11 +2480,13 @@ local function finalize_breakpoint_state(root, callback)
 		return
 	end
 	local generation = next_breakpoint_sync_generation()
+	log_breakpoint_debug("finalize_begin", root, "generation=" .. tostring(generation))
 
 	save_project_breakpoints(root)
 
 	local session = require("dap").session()
 	if not session then
+		log_breakpoint_debug("finalize_no_session", root, "generation=" .. tostring(generation))
 		apply_breakpoint_snapshot(root, generation, function()
 			if callback then
 				callback()
@@ -2432,6 +2497,7 @@ local function finalize_breakpoint_state(root, callback)
 
 	session:set_breakpoints(require("dap.breakpoints").get(), function()
 		vim.schedule(function()
+			log_breakpoint_debug("finalize_session_callback", root, "generation=" .. tostring(generation))
 			apply_breakpoint_snapshot(root, generation, function()
 				if callback then
 					callback()
@@ -2449,12 +2515,14 @@ local function sync_active_session_breakpoints(root)
 
 	local session = require("dap").session()
 	if not session then
+		log_breakpoint_debug("session_sync_no_session", root)
 		apply_breakpoint_snapshot(root, current_breakpoint_sync_generation())
 		return
 	end
 
 	session:set_breakpoints(require("dap.breakpoints").get(), function()
 		vim.schedule(function()
+			log_breakpoint_debug("session_sync_callback", root)
 			apply_breakpoint_snapshot(root, current_breakpoint_sync_generation())
 		end)
 	end)
@@ -2573,6 +2641,7 @@ save_project_breakpoints = function(root)
 		version = 1,
 		items = items,
 	})
+	log_breakpoint_debug("save_project_breakpoints", root, "items=" .. tostring(#items))
 end
 
 local function set_breakpoint_record(root, item)
@@ -2609,6 +2678,7 @@ local function restore_project_breakpoints(root)
 	local payload = read_json(breakpoint_store_path(root))
 	state.loaded_roots[root] = true
 	if not payload or type(payload.items) ~= "table" then
+		log_breakpoint_debug("restore_no_payload", root)
 		return
 	end
 	for _, item in ipairs(payload.items) do
@@ -2616,6 +2686,7 @@ local function restore_project_breakpoints(root)
 			set_breakpoint_record(root, item)
 		end
 	end
+	log_breakpoint_debug("restore_loaded", root, "items=" .. tostring(#payload.items))
 	sync_breakpoint_overlays(root)
 	refresh_debug_ui_breakpoints()
 end
@@ -3384,8 +3455,10 @@ function M.toggle_breakpoint_with_opts(opts)
 		local file_path = normalize(vim.api.nvim_buf_get_name(0))
 		local bufnr = vim.api.nvim_get_current_buf()
 		local line = vim.api.nvim_win_get_cursor(0)[1]
+		log_breakpoint_debug("toggle_request", root, string.format("%s:%d", tostring(file_path), tonumber(line) or 0))
 		local key, redirected = entry_at_display(file_path, line)
 		if key and redirected then
+			log_breakpoint_debug("toggle_remove_redirected", root, key)
 			remove_redirected_breakpoint(key, redirected)
 			return finalize_breakpoint_state(root, done)
 		end
@@ -3395,6 +3468,7 @@ function M.toggle_breakpoint_with_opts(opts)
 			local cursor = vim.api.nvim_win_get_cursor(0)
 			return resolve_header_breakpoint_target(root, bufnr, file_path, cursor[1] - 1, cursor[2], function(target)
 				if target then
+					log_breakpoint_debug("toggle_header_redirect", root, string.format("%s:%d -> %s:%d", tostring(target.display_path), tonumber(target.display_line) or 0, tostring(target.actual_path), tonumber(target.actual_line) or 0))
 					target.condition = opts.condition
 					target.hit_condition = opts.hit_condition
 					target.log_message = opts.log_message
@@ -3403,6 +3477,7 @@ function M.toggle_breakpoint_with_opts(opts)
 				end
 
 				if opts and (opts.condition or opts.hit_condition or opts.log_message) then
+					log_breakpoint_debug("toggle_header_fallback_condition", root)
 					require("dap.breakpoints").toggle({
 						condition = opts.condition,
 						hit_condition = opts.hit_condition,
@@ -3412,12 +3487,14 @@ function M.toggle_breakpoint_with_opts(opts)
 					return finalize_breakpoint_state(root, done)
 				end
 
+				log_breakpoint_debug("toggle_header_fallback_plain", root)
 				fallback_toggle_current_breakpoint(root)
 				return finalize_breakpoint_state(root, done)
 			end)
 		end
 
 		if opts and (opts.condition or opts.hit_condition or opts.log_message) then
+			log_breakpoint_debug("toggle_condition", root)
 			require("dap.breakpoints").toggle({
 				condition = opts.condition,
 				hit_condition = opts.hit_condition,
@@ -3427,6 +3504,7 @@ function M.toggle_breakpoint_with_opts(opts)
 			return finalize_breakpoint_state(root, done)
 		end
 
+		log_breakpoint_debug("toggle_plain", root)
 		fallback_toggle_current_breakpoint(root)
 		return finalize_breakpoint_state(root, done)
 	end)
@@ -3801,6 +3879,7 @@ function M.setup()
 				local root = active_root()
 				if root then
 					vim.schedule(function()
+						log_breakpoint_debug("dap_event_breakpoint", root)
 						apply_breakpoint_snapshot(root, current_breakpoint_sync_generation())
 					end)
 				end
