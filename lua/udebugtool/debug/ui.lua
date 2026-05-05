@@ -33,6 +33,9 @@ local state = {
 	watch_root = nil,
 	watch_values = {},
 	children_cache = {},
+	enum_value_cache = {},
+	enum_value_pending = {},
+	enum_frame_id = nil,
 	expanded = {},
 	breakpoints_muted = false,
 	selected_watch = nil,
@@ -1186,6 +1189,124 @@ local function value_highlight_group(value)
 	return "UDebugToolValue"
 end
 
+local function enum_cache_key(frame_id, expression)
+	if not frame_id or not expression or expression == "" then
+		return nil
+	end
+	return tostring(frame_id) .. "::" .. tostring(expression)
+end
+
+local function enum_type_name(entry)
+	local raw = tostring(entry and entry.type or "")
+	raw = vim.trim(raw)
+	if raw == "" then
+		return nil
+	end
+	return raw
+end
+
+local function enum_value_already_annotated(value)
+	value = vim.trim(tostring(value or ""))
+	if value == "" then
+		return false
+	end
+	return value:match("%([%s]*[-+]?%d+[%s]*%)$") ~= nil
+		or value:match("%([%s]*0x[%da-fA-F]+[%s]*%)$") ~= nil
+end
+
+local function is_enum_like_entry(entry)
+	if type(entry) ~= "table" then
+		return false
+	end
+
+	local value = vim.trim(tostring(entry.value or entry.result or ""))
+	if value == "" or enum_value_already_annotated(value) then
+		return false
+	end
+
+	local type_name = enum_type_name(entry)
+	if not type_name then
+		return false
+	end
+
+	local lower_type = type_name:lower()
+	if lower_type:find("enum", 1, true) then
+		return true
+	end
+	if type_name:match("^E[%w_:]+$") then
+		return true
+	end
+	if type_name:match("^TEnumAsByte%s*<.+>$") then
+		return true
+	end
+	return false
+end
+
+local function sync_enum_value_cache(session)
+	local frame_id = session and session.current_frame and session.current_frame.id or nil
+	if state.enum_frame_id == frame_id then
+		return
+	end
+	state.enum_frame_id = frame_id
+	state.enum_value_cache = {}
+	state.enum_value_pending = {}
+end
+
+local function request_enum_numeric_value(session, entry)
+	if not session or not session.current_frame or not is_enum_like_entry(entry) then
+		return
+	end
+
+	local expression = tostring(entry.evaluateName or entry.expression or "")
+	expression = vim.trim(expression)
+	if expression == "" then
+		return
+	end
+
+	local key = enum_cache_key(session.current_frame.id, expression)
+	if not key or state.enum_value_cache[key] ~= nil or state.enum_value_pending[key] then
+		return
+	end
+
+	state.enum_value_pending[key] = true
+	session:evaluate({
+		expression = "(int)(" .. expression .. ")",
+		context = "watch",
+		frameId = session.current_frame.id,
+	}, function(err, response)
+		state.enum_value_pending[key] = nil
+		if not err then
+			local result = vim.trim(tostring(response and response.result or ""))
+			if result ~= "" then
+				state.enum_value_cache[key] = result
+			end
+		end
+		vim.schedule(function()
+			if M.is_open() then
+				render_all(current_session())
+			end
+		end)
+	end)
+end
+
+local function display_variable_value(session, entry)
+	local value = tostring(entry and (entry.value or entry.result) or "")
+	if not is_enum_like_entry(entry) then
+		return value
+	end
+
+	local expression = vim.trim(tostring(entry.evaluateName or entry.expression or ""))
+	local frame_id = session and session.current_frame and session.current_frame.id or nil
+	local key = enum_cache_key(frame_id, expression)
+	local numeric = key and state.enum_value_cache[key] or nil
+	if numeric and numeric ~= "" and vim.trim(value) ~= numeric then
+		return string.format("%s (%s)", value, numeric)
+	end
+
+	request_enum_numeric_value(session, entry)
+	return value
+end
+
 local function add_value_spans(spans, text, start_col)
 	local i = 1
 	while i <= #text do
@@ -1803,7 +1924,8 @@ local function render_variable_tree(builder, session, entry, depth, item_kind, i
 	local prefix = has_children and (expanded and "[-]" or "[+]") or "   "
 	local indent = string.rep("  ", depth)
 	local name = tostring(entry.name or entry.expression or entry.label or "?")
-	local value = truncate(entry.value or entry.result or "", 72)
+	local raw_value = display_variable_value(session, entry)
+	local value = truncate(raw_value or "", 72)
 	local text = string.format("%s%s %s", indent, prefix, name)
 	local name_start = #indent + #prefix + 1
 	local operator_start = nil
@@ -1832,7 +1954,9 @@ local function render_variable_tree(builder, session, entry, depth, item_kind, i
 			key = key,
 			ref = ref,
 			name = name,
-			value = entry.value or entry.result or "",
+			value = raw_value or "",
+			type = entry.type,
+			evaluateName = entry.evaluateName,
 		}, item_payload or {}) or nil,
 		spans = spans,
 	})
@@ -2964,6 +3088,9 @@ function M.mark_running(session)
 	state.running = true
 	state.stop_event = nil
 	state.selected_item = nil
+	state.enum_frame_id = nil
+	state.enum_value_cache = {}
+	state.enum_value_pending = {}
 	sync_watches()
 	M.open()
 	render_all(session)
@@ -2981,11 +3108,15 @@ function M.refresh(session)
 
 	if not session then
 		state.selected_item = nil
+		state.enum_frame_id = nil
+		state.enum_value_cache = {}
+		state.enum_value_pending = {}
 		render_all(nil)
 		return
 	end
 
 	ensure_stack(session, function()
+		sync_enum_value_cache(session)
 		fetch_frame_scopes(session, session.current_frame, function()
 			evaluate_watches(session, function()
 				vim.schedule(function()
@@ -3247,6 +3378,9 @@ function M.reset()
 	state.watch_root = nil
 	state.watch_values = {}
 	state.children_cache = {}
+	state.enum_value_cache = {}
+	state.enum_value_pending = {}
+	state.enum_frame_id = nil
 	state.expanded = {}
 	state.selected_watch = nil
 	state.selected_item = nil
