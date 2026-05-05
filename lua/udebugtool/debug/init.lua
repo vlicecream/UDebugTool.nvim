@@ -2101,30 +2101,6 @@ apply_breakpoint_sign_style = function()
 		linehl = "",
 		numhl = "",
 	})
-	define_or_update_sign("DapBreakpoint", {
-		text = "●",
-		texthl = "UDebugToolBreakpointMarker",
-		linehl = "",
-		numhl = "",
-	})
-	define_or_update_sign("DapBreakpointCondition", {
-		text = "●",
-		texthl = "UDebugToolBreakpointMarker",
-		linehl = "",
-		numhl = "",
-	})
-	define_or_update_sign("DapBreakpointRejected", {
-		text = "●",
-		texthl = "UDebugToolBreakpointMarker",
-		linehl = "",
-		numhl = "",
-	})
-	define_or_update_sign("DapLogPoint", {
-		text = "◆",
-		texthl = "UDebugToolBreakpointMarker",
-		linehl = "",
-		numhl = "",
-	})
 	define_or_update_sign("UDebugToolBreakpointActiveOverlay", {
 		text = "●",
 		texthl = "UDebugToolBreakpointMarker",
@@ -3284,7 +3260,6 @@ function M.toggle_breakpoint()
 	end
 
 	require("dap").toggle_breakpoint()
-	refresh_debug_ui_breakpoints()
 end
 
 function M.toggle_breakpoint_with_opts(opts)
