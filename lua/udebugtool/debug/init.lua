@@ -32,6 +32,7 @@ local state = {
 	breakpoint_sync_generation = 0,
 	breakpoint_log_announce_path = nil,
 	breakpoint_log_failure = nil,
+	breakpoint_last_toggle = nil,
 	breakpoint_mutes = {},
 	breakpoint_overlays = {},
 	launch_in_progress = false,
@@ -695,6 +696,60 @@ local function breakpoint_snapshot_summary(root)
 		tostring(state.breakpoint_toggle_inflight == true),
 		tonumber(state.breakpoint_sync_generation or 0) or 0
 	)
+end
+
+local function sign_definition_summary(name)
+	local ok, defined = pcall(vim.fn.sign_getdefined, name)
+	local item = ok and type(defined) == "table" and defined[1] or nil
+	if type(item) ~= "table" then
+		return string.format("%s=<missing>", tostring(name))
+	end
+	return string.format(
+		"%s={text=%s texthl=%s linehl=%s numhl=%s}",
+		tostring(name),
+		tostring(item.text or ""),
+		tostring(item.texthl or ""),
+		tostring(item.linehl or ""),
+		tostring(item.numhl or "")
+	)
+end
+
+local function line_sign_summary(path, line)
+	path = normalize(path)
+	line = tonumber(line)
+	if not path or path == "" or not line or line <= 0 then
+		return "line-signs=unavailable"
+	end
+	local bufnr = vim.fn.bufnr(path, false)
+	if not bufnr or bufnr < 0 or vim.api.nvim_buf_is_valid(bufnr) ~= true then
+		return string.format("line-signs=%s:%d <buffer-missing>", tostring(path), line)
+	end
+
+	local ok, placed = pcall(vim.fn.sign_getplaced, bufnr, {})
+	if not ok then
+		return string.format("line-signs=%s:%d <sign_getplaced_failed>", tostring(path), line)
+	end
+	local signs = placed[1] and placed[1].signs or {}
+	local parts = {}
+	for _, sign in ipairs(signs) do
+		if tonumber(sign.lnum) == line then
+			table.insert(
+				parts,
+				string.format(
+					"%s#%s(group=%s,pri=%s)",
+					tostring(sign.name or "?"),
+					tostring(sign.id or "?"),
+					tostring(sign.group or ""),
+					tostring(sign.priority or "")
+				)
+			)
+		end
+	end
+
+	if #parts == 0 then
+		return string.format("line-signs=%s:%d <none>", tostring(path), line)
+	end
+	return string.format("line-signs=%s:%d %s", tostring(path), line, table.concat(parts, ", "))
 end
 
 local function log_breakpoint_debug(stage, root, extra)
@@ -2433,6 +2488,10 @@ sync_breakpoint_overlays = function(root)
 	end
 
 	state.breakpoint_overlays[root] = overlays
+	local last_toggle = state.breakpoint_last_toggle
+	if last_toggle and last_toggle.root == root then
+		log_breakpoint_debug("overlay_line_after_sync", root, line_sign_summary(last_toggle.path, last_toggle.line))
+	end
 end
 
 local function entry_at_display(path, line)
@@ -3495,7 +3554,21 @@ function M.toggle_breakpoint_with_opts(opts)
 		local file_path = normalize(vim.api.nvim_buf_get_name(0))
 		local bufnr = vim.api.nvim_get_current_buf()
 		local line = vim.api.nvim_win_get_cursor(0)[1]
+		state.breakpoint_last_toggle = {
+			root = root,
+			path = file_path,
+			line = line,
+		}
 		log_breakpoint_debug("toggle_request", root, string.format("%s:%d", tostring(file_path), tonumber(line) or 0))
+		log_breakpoint_debug(
+			"toggle_line_before",
+			root,
+			table.concat({
+				line_sign_summary(file_path, line),
+				sign_definition_summary("DapBreakpoint"),
+				sign_definition_summary("UDebugToolBreakpointActiveOverlay"),
+			}, " | ")
+		)
 		local key, redirected = entry_at_display(file_path, line)
 		if key and redirected then
 			log_breakpoint_debug("toggle_remove_redirected", root, key)
