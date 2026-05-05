@@ -2612,6 +2612,18 @@ function M.is_open()
 	return valid_win(state.scopes.win) or valid_win(state.watches_panel.win) or valid_win(state.controls.win) or valid_win(state.console.win)
 end
 
+function M.focus_console()
+	if valid_win(state.console.win) then
+		pcall(vim.api.nvim_set_current_win, state.console.win)
+		return true
+	end
+	if valid_win(state.console_tabs.win) then
+		pcall(vim.api.nvim_set_current_win, state.console_tabs.win)
+		return true
+	end
+	return false
+end
+
 function M.mark_running(session)
 	state.session = session
 	state.running = true

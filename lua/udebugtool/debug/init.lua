@@ -3097,6 +3097,51 @@ function M.toggle_ui()
 	debug_ui.open()
 end
 
+function M.dashboard()
+	local debug_ui = require("udebugtool.debug.ui")
+	if dap_available() then
+		return debug_ui.refresh(require("dap").session())
+	end
+	debug_ui.open()
+end
+
+function M.log()
+	local debug_ui = require("udebugtool.debug.ui")
+	local panel = shared_output_panel()
+	local root = active_root and active_root() or nil
+	local key = root and debug_output_key(root) or "workspace:unreal"
+
+	if debug_ui.is_open and debug_ui.is_open() then
+		if panel then
+			panel.open_tab({
+				key = key,
+				title = "Unreal",
+				kind = "unreal",
+				focus = true,
+				explicit = true,
+			})
+			panel.select(key)
+		end
+		debug_ui.focus_console()
+		return
+	end
+
+	if panel then
+		panel.open_tab({
+			key = key,
+			title = "Unreal",
+			kind = "unreal",
+			focus = true,
+			explicit = true,
+		})
+		panel.select(key)
+		return
+	end
+
+	M.dashboard()
+	debug_ui.focus_console()
+end
+
 function M.toggle_breakpoint()
 	return M.toggle_breakpoint_with_opts({})
 end

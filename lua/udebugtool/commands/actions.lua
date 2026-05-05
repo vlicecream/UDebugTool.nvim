@@ -6,6 +6,10 @@ function M.attach()
 	debug.attach()
 end
 
+function M.dashboard()
+	debug.dashboard()
+end
+
 function M.editor()
 	debug.launch_editor()
 end
@@ -42,10 +46,16 @@ function M.step_out()
 	debug.step_out()
 end
 
+function M.log()
+	debug.log()
+end
+
 function M.help()
 	print([[
 UDebugTool commands:
 
+  :UDebugTool dashboard    Open / focus the debug dashboard
+  :UDebugTool log          Focus Unreal / debug logs
   :UDebugTool attach       Attach to the current Unreal process
   :UDebugTool editor       Build and launch Unreal Editor under debugger
   :UDebugTool breakpoint   Toggle a breakpoint at the cursor
