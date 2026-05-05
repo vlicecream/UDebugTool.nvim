@@ -14,6 +14,7 @@ local apply_breakpoint_sign_style
 local sync_breakpoint_overlays
 local active_root
 local collect_project_breakpoints
+local save_project_breakpoints
 
 local redirect_group = "udebugtool_debug_redirect"
 local overlay_group = "udebugtool_breakpoint_overlay"
@@ -2530,7 +2531,7 @@ collect_project_breakpoints = function(root)
 	return items
 end
 
-local function save_project_breakpoints(root)
+save_project_breakpoints = function(root)
 	root = root or active_root()
 	if not root or not dap_available() then
 		return
