@@ -43,6 +43,25 @@ local function read_json_file(path)
 	return data
 end
 
+local function ucore_registry_path()
+	local cache_dir = normalize(vim.fn.stdpath("data") .. "/ucore")
+	vim.fn.mkdir(cache_dir, "p")
+	return cache_dir .. "/registry.json"
+end
+
+local function read_ucore_registry()
+	local registry = read_json_file(ucore_registry_path())
+	if type(registry) ~= "table" then
+		return {
+			projects = {},
+			engines = {},
+		}
+	end
+	registry.projects = type(registry.projects) == "table" and registry.projects or {}
+	registry.engines = type(registry.engines) == "table" and registry.engines or {}
+	return registry
+end
+
 local function engine_association_candidates(association)
 	if not association or association == "" then
 		return {}
@@ -246,17 +265,32 @@ function M.resolve_engine_root(project_root)
 	return nil, "Could not resolve Unreal Engine root for EngineAssociation: " .. tostring(association)
 end
 
-function M.engine_metadata(project_root)
-	local engine_root, association_or_err = M.resolve_engine_root(project_root)
-	if not engine_root then
-		return nil, association_or_err
+function M.cached_engine_metadata(project_root)
+	project_root = normalize(project_root)
+	if not project_root or project_root == "" then
+		return nil
 	end
-	local uproject_path = M.find_project_file_in_root(project_root)
-	local association = M.read_engine_association(uproject_path)
+
+	local registry = read_ucore_registry()
+	local item = registry.projects and registry.projects[project_root]
+	if type(item) ~= "table" or not item.engine_root then
+		return nil
+	end
+
 	return {
-		engine_association = association,
-		engine_root = engine_root,
+		engine_association = item.engine_association,
+		engine_root = normalize(item.engine_root),
+		engine_id = item.engine_id,
 	}
+end
+
+function M.engine_metadata(project_root)
+	local cached = M.cached_engine_metadata(project_root)
+	if cached then
+		return cached
+	end
+
+	return nil, "UCore engine cache missing for project. Run :UCore boot first."
 end
 
 function M.project_name(root)
