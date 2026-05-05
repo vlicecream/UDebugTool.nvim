@@ -3596,22 +3596,12 @@ function M.setup()
 	setup_debug_marker_signs()
 
 	local group = vim.api.nvim_create_augroup("UDebugTool", { clear = true })
-	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "BufEnter" }, {
+	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "BufEnter", "WinEnter" }, {
 		group = group,
 		callback = function(args)
-			local path = vim.api.nvim_buf_get_name(args.buf)
-			local root = path ~= "" and project.find_project_root(path) or nil
-			if root then
-				restore_project_breakpoints(root)
-			end
-		end,
-	})
-
-	vim.api.nvim_create_autocmd("VimLeavePre", {
-		group = group,
-		callback = function()
-			for root, _ in pairs(state.loaded_roots) do
-				save_project_breakpoints(root)
+			local win = vim.api.nvim_get_current_win()
+			if vim.api.nvim_win_get_buf(win) == args.buf and vim.bo[args.buf].buftype == "" then
+				vim.wo[win].signcolumn = "yes"
 			end
 		end,
 	})
