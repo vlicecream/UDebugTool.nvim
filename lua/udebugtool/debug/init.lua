@@ -2076,6 +2076,11 @@ local function refresh_debug_ui_breakpoints()
 	end
 
 	vim.schedule(function()
+		if type(debug_ui.refresh_breakpoints) == "function" then
+			pcall(debug_ui.refresh_breakpoints)
+			return
+		end
+
 		local session = nil
 		local ok_dap, dap = pcall(require, "dap")
 		if ok_dap and dap and type(dap.session) == "function" then

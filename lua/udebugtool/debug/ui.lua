@@ -1325,6 +1325,20 @@ local function display_variable_value(session, entry)
 	return value
 end
 
+local function is_hex_like_token(token)
+	token = tostring(token or "")
+	if token == "" then
+		return false
+	end
+	if not token:match("^[%da-fA-F]+$") then
+		return false
+	end
+	if not token:match("[a-fA-F]") then
+		return false
+	end
+	return #token >= 8
+end
+
 local function add_value_spans(spans, text, start_col)
 	local i = 1
 	while i <= #text do
@@ -1372,8 +1386,16 @@ local function add_value_spans(spans, text, start_col)
 			i = j
 		elseif ch:match("%d") then
 			local j = i + 1
-			while j <= #text and text:sub(j, j):match("[%d%.]") do
+			while j <= #text and text:sub(j, j):match("[%w%.]") do
 				j = j + 1
+			end
+			local token = text:sub(i, j - 1)
+			local group = is_hex_like_token(token) and "UDebugToolVariableNumber" or nil
+			if not group then
+				j = i + 1
+				while j <= #text and text:sub(j, j):match("[%d%.]") do
+					j = j + 1
+				end
 			end
 			table.insert(spans, {
 				group = "UDebugToolVariableNumber",
@@ -2956,6 +2978,11 @@ function M.open()
 	ensure_layout_autocmds()
 	sync_watches()
 	state.console_title = "Console"
+	local signature = current_layout_signature()
+	if M.is_open() and grid_ready() and state.layout_signature == signature then
+		refresh_cursorlines()
+		return
+	end
 	clear_debug_grid()
 	close_win(state.right.win)
 	close_win(state.toolbar.win)
@@ -2964,7 +2991,7 @@ function M.open()
 	ensure_sidebar_layout()
 	ensure_tray_layout()
 	refresh_cursorlines()
-	state.layout_signature = current_layout_signature()
+	state.layout_signature = signature
 end
 
 function M.hover_under_cursor()
@@ -3147,6 +3174,13 @@ function M.refresh(session)
 			end)
 		end)
 	end)
+end
+
+function M.refresh_breakpoints()
+	if not M.is_open() then
+		return
+	end
+	render_breakpoints_panel()
 end
 
 function M.activate_current_item(slot_name)
