@@ -1065,6 +1065,24 @@ local function next_nonspace_char(text, start_idx)
 	return nil, nil
 end
 
+local function surrounding_nonspace_pair(text, index, direction)
+	if direction == "forward" then
+		local _, pos = next_nonspace_char(text, index)
+		if not pos then
+			return ""
+		end
+		return text:sub(pos, pos + 1)
+	end
+
+	for i = index, 1, -1 do
+		local ch = text:sub(i, i)
+		if not ch:match("%s") then
+			return text:sub(math.max(1, i - 1), i)
+		end
+	end
+	return ""
+end
+
 local function is_identifier_char(ch)
 	return ch ~= nil and ch:match("[%w_]")
 end
@@ -1370,9 +1388,13 @@ local function add_value_spans(spans, text, start_col)
 			end
 			local token = text:sub(i, j - 1)
 			local next_char = next_nonspace_char(text, j)
+			local next_pair = surrounding_nonspace_pair(text, j, "forward")
+			local prev_pair = surrounding_nonspace_pair(text, i - 1, "backward")
 			local group = value_highlight_group(token)
 			if group == "UDebugToolValue" then
-				if next_char == "=" or next_char == ":" then
+				if next_pair == "::" or prev_pair == "::" then
+					group = "UDebugToolCodeType"
+				elseif next_char == "=" or (next_char == ":" and next_pair ~= "::") then
 					group = "UDebugToolVariableName"
 				elseif token:match("^[A-Z]") then
 					group = "UDebugToolCodeType"

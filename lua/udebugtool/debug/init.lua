@@ -2069,6 +2069,22 @@ local function display_sign_name()
 	return "UDebugToolBreakpoint"
 end
 
+local function refresh_debug_ui_breakpoints()
+	local ok_ui, debug_ui = pcall(require, "udebugtool.debug.ui")
+	if not ok_ui or type(debug_ui) ~= "table" or type(debug_ui.is_open) ~= "function" or not debug_ui.is_open() then
+		return
+	end
+
+	vim.schedule(function()
+		local session = nil
+		local ok_dap, dap = pcall(require, "dap")
+		if ok_dap and dap and type(dap.session) == "function" then
+			session = dap.session()
+		end
+		pcall(debug_ui.refresh, session)
+	end)
+end
+
 local function define_or_update_sign(name, fallback)
 	vim.fn.sign_define(name, vim.deepcopy(fallback or {}))
 end
@@ -2466,6 +2482,7 @@ local function save_project_breakpoints(root)
 		items = items,
 	})
 	sync_breakpoint_overlays(root)
+	refresh_debug_ui_breakpoints()
 end
 
 local function set_breakpoint_record(root, item)
@@ -2510,6 +2527,7 @@ local function restore_project_breakpoints(root)
 		end
 	end
 	sync_breakpoint_overlays(root)
+	refresh_debug_ui_breakpoints()
 end
 
 local function breakpoint_item_at_cursor(root)
