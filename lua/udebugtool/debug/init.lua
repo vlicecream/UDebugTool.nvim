@@ -30,6 +30,8 @@ local state = {
 	attach_target_pid = nil,
 	breakpoint_toggle_inflight = false,
 	breakpoint_sync_generation = 0,
+	breakpoint_log_announce_path = nil,
+	breakpoint_log_failure = nil,
 	breakpoint_mutes = {},
 	breakpoint_overlays = {},
 	launch_in_progress = false,
@@ -646,6 +648,20 @@ local function breakpoint_debug_log_path()
 	return path_join(cache_dir(), "breakpoint-sync.log")
 end
 
+local function breakpoint_debug_log_paths(root)
+	local paths = { breakpoint_debug_log_path() }
+	if root then
+		local ok, project_paths = pcall(project.build_paths, root)
+		if ok and project_paths and project_paths.cache_dir then
+			local project_log = path_join(project_paths.cache_dir, "breakpoint-sync.log")
+			if project_log ~= paths[1] then
+				table.insert(paths, project_log)
+			end
+		end
+	end
+	return paths
+end
+
 local function breakpoint_snapshot_summary(root)
 	if not dap_available() then
 		return "dap=unavailable"
@@ -682,12 +698,6 @@ local function breakpoint_snapshot_summary(root)
 end
 
 local function log_breakpoint_debug(stage, root, extra)
-	local path = breakpoint_debug_log_path()
-	local parent = vim.fn.fnamemodify(path, ":p:h")
-	if parent and parent ~= "" then
-		vim.fn.mkdir(parent, "p")
-	end
-
 	local parts = {
 		os.date("%Y-%m-%d %H:%M:%S"),
 		tostring(stage or "stage"),
@@ -697,7 +707,36 @@ local function log_breakpoint_debug(stage, root, extra)
 		table.insert(parts, tostring(extra))
 	end
 
-	pcall(vim.fn.writefile, { table.concat(parts, " | ") }, path, "a")
+	local line = table.concat(parts, " | ")
+	local wrote_path = nil
+	local errors = {}
+	for _, path in ipairs(breakpoint_debug_log_paths(root)) do
+		local parent = vim.fn.fnamemodify(path, ":p:h")
+		if parent and parent ~= "" then
+			vim.fn.mkdir(parent, "p")
+		end
+		local ok, err = pcall(vim.fn.writefile, { line }, path, "a")
+		if ok then
+			wrote_path = path
+			break
+		end
+		table.insert(errors, string.format("%s => %s", tostring(path), tostring(err)))
+	end
+
+	if wrote_path and state.breakpoint_log_announce_path ~= wrote_path then
+		state.breakpoint_log_announce_path = wrote_path
+		vim.schedule(function()
+			vim.notify("UDebugTool breakpoint log: " .. wrote_path, vim.log.levels.INFO)
+		end)
+	elseif not wrote_path and #errors > 0 then
+		local message = table.concat(errors, " ; ")
+		if state.breakpoint_log_failure ~= message then
+			state.breakpoint_log_failure = message
+			vim.schedule(function()
+				vim.notify("UDebugTool breakpoint log write failed: " .. message, vim.log.levels.WARN)
+			end)
+		end
+	end
 end
 
 local function adapter_staging_dir()
