@@ -104,6 +104,21 @@ require("udebugtool").setup({
     editor_target = nil,
     game_target = nil,
   },
+  build = {
+    open_quickfix_on_error = true,
+    include_warnings = true,
+    color_log = true,
+    autosave = true,
+    use_target_arguments = true,
+    build_shader_compile_worker = true,
+    shader_compile_worker_target = "ShaderCompileWorker",
+    shader_compile_worker_platform = "Win64",
+    shader_compile_worker_configuration = "Development",
+    shader_compile_worker_quiet = true,
+    wait_mutex = true,
+    from_msbuild = true,
+    extra_args = {},
+  },
   debug = {
     enable = true,
     autosave_before_launch = true,
@@ -132,6 +147,14 @@ require("udebugtool").setup({
 `startup.mode` only controls whether debug launch opens `editor` or `game`.
 
 If you want what you call "debug mode", set `startup.configuration` to `DebugGame` or `Debug`. Do not put that into `startup.mode`.
+
+By default, debug launch builds use Rider-style Unreal Build Tool arguments:
+
+```text
+Build.bat -Target="<Project>Editor Win64 Development -Project=\"...\Project.uproject\"" -Target="ShaderCompileWorker Win64 Development -Project=\"...\Project.uproject\" -Quiet" -WaitMutex -FromMSBuild
+```
+
+Set `build.use_target_arguments = false` if you need the older positional `Build.bat <Target> <Platform> <Configuration> -Project=...` form.
 
 ## Notes
 

@@ -284,18 +284,58 @@ local function build_command(ctx, opts)
 		return nil, "Build.bat not found: " .. tostring(bat)
 	end
 
+	local build = config.values.build or {}
 	local target = opts.target or project.editor_target_name(ctx.root)
 	local platform = opts.platform or "Win64"
 	local configuration = opts.configuration or "Development"
-	local script = table.concat({
-		"&",
-		ps_quote(bat),
-		ps_quote(target),
-		ps_quote(platform),
-		ps_quote(configuration),
-		ps_quote("-Project=" .. ctx.uproject),
-		ps_quote("-WaitMutex"),
-	}, " ")
+	local args = {}
+
+	if build.use_target_arguments ~= false then
+		local function target_arg(name, target_platform, target_config, extra)
+			local spec = table.concat({
+				tostring(name),
+				tostring(target_platform),
+				tostring(target_config),
+				'-Project="' .. tostring(ctx.uproject) .. '"',
+				extra or "",
+			}, " ")
+			spec = vim.trim(spec)
+			return '-Target="' .. spec .. '"'
+		end
+
+		table.insert(args, target_arg(target, platform, configuration))
+
+		if build.build_shader_compile_worker ~= false then
+			local shader_extra = build.shader_compile_worker_quiet ~= false and "-Quiet" or nil
+			table.insert(args, target_arg(
+				build.shader_compile_worker_target or "ShaderCompileWorker",
+				build.shader_compile_worker_platform or platform,
+				build.shader_compile_worker_configuration or "Development",
+				shader_extra
+			))
+		end
+	else
+		table.insert(args, target)
+		table.insert(args, platform)
+		table.insert(args, configuration)
+		table.insert(args, "-Project=" .. ctx.uproject)
+	end
+
+	if build.wait_mutex ~= false then
+		table.insert(args, "-WaitMutex")
+	end
+	if build.from_msbuild ~= false then
+		table.insert(args, "-FromMSBuild")
+	end
+	for _, arg in ipairs(build.extra_args or {}) do
+		table.insert(args, tostring(arg))
+	end
+
+	local script_parts = { "&", ps_quote(bat) }
+	for _, arg in ipairs(args) do
+		table.insert(script_parts, ps_quote(arg))
+	end
+	local script = table.concat(script_parts, " ")
 
 	return { powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script }, nil
 end
