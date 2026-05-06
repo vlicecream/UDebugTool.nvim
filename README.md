@@ -123,6 +123,7 @@ require("udebugtool").setup({
     enable = true,
     autosave_before_launch = true,
     build_before_launch = true,
+    prefer_configuration_executable = true,
     redirect_header_breakpoints = true,
     adapter = {
       auto_install = true,
@@ -155,6 +156,8 @@ Build.bat -Target="<Project>Editor Win64 Development -Project=\"...\Project.upro
 ```
 
 Set `build.use_target_arguments = false` if you need the older positional `Build.bat <Target> <Platform> <Configuration> -Project=...` form.
+
+When launching the editor under debugger, `debug.prefer_configuration_executable` makes `DebugGame` prefer `UnrealEditor-Win64-DebugGame.exe` and `Debug` prefer `UnrealEditor-Win64-Debug.exe`, matching Rider-style launch behavior. If the configuration-specific executable is missing, UDebugTool falls back to `UnrealEditor.exe`.
 
 ## Notes
 

@@ -2017,7 +2017,7 @@ local function launch_context(root, mode_override)
 		return nil, err
 	end
 
-	local editor = unreal.editor_executable(profile.engine_root)
+	local editor = unreal.editor_executable(profile.engine_root, profile.platform, profile.configuration)
 	return {
 		root = normalize(profile.root),
 		uproject = normalize(profile.uproject),

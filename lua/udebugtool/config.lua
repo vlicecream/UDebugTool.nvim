@@ -42,6 +42,7 @@ local defaults = {
 		enable = true,
 		autosave_before_launch = true,
 		build_before_launch = true,
+		prefer_configuration_executable = true,
 		redirect_header_breakpoints = true,
 		adapter = {
 			auto_install = true,
