@@ -2742,13 +2742,36 @@ local function enumerate_processes(ctx, callback)
 		return callback({}, "UDebugTool currently supports Windows only")
 	end
 
-	local names = {
-		"UnrealEditor.exe",
-		"UE4Editor.exe",
-		ctx.project_name .. ".exe",
-		ctx.project_name .. "Server.exe",
-		ctx.project_name .. "Client.exe",
-	}
+	local names = {}
+	local seen_names = {}
+	local function add_name(name)
+		name = tostring(name or "")
+		if name == "" then
+			return
+		end
+		local lower_name = lower(name)
+		if seen_names[lower_name] then
+			return
+		end
+		seen_names[lower_name] = true
+		table.insert(names, name)
+	end
+
+	local function add_exe_name(path)
+		path = normalize(path)
+		if not path or path == "" then
+			return
+		end
+		add_name(vim.fn.fnamemodify(path, ":t"))
+	end
+
+	add_name("UnrealEditor.exe")
+	add_name("UE4Editor.exe")
+	add_name(ctx.project_name .. ".exe")
+	add_name(ctx.project_name .. "Server.exe")
+	add_name(ctx.project_name .. "Client.exe")
+	add_exe_name(ctx.program)
+	add_exe_name(ctx.editor_exe)
 
 	local quoted = {}
 	for _, name in ipairs(names) do
@@ -2789,14 +2812,15 @@ local function enumerate_processes(ctx, callback)
 				local name = tostring(item.name or "")
 				local command_line = normalize(item.command_line or "")
 				local exe = normalize(item.exe or "")
+				local lower_command_line = lower(command_line)
 				local score = 0
-				if command_line:find(lower(ctx.uproject), 1, true) then
+				if lower_command_line:find(lower(ctx.uproject), 1, true) then
 					score = score + 200
 				end
-				if command_line:find(lower(ctx.root), 1, true) then
+				if lower_command_line:find(lower(ctx.root), 1, true) then
 					score = score + 120
 				end
-				if lower(name) == "unrealeditor.exe" or lower(name) == "ue4editor.exe" then
+				if lower(name):find("^unrealeditor", 1, false) or lower(name):find("^ue4editor", 1, false) then
 					score = score + 80
 					item.kind = "editor"
 				elseif lower(name):find("server", 1, true) then
@@ -2868,6 +2892,7 @@ local function spawn_runtime_process(ctx, callback)
 end
 
 local function wait_for_attach_target(ctx, preferred_pid, callback)
+	local started_at = vim.loop.hrtime()
 	local deadline = vim.loop.hrtime() + (30 * 1e9)
 	local timer = vim.loop.new_timer()
 	local done = false
@@ -2899,6 +2924,14 @@ local function wait_for_attach_target(ctx, preferred_pid, callback)
 			end
 			for _, item in ipairs(items or {}) do
 				if tonumber(item.pid) == tonumber(preferred_pid) then
+					return finish(item, nil)
+				end
+			end
+			if vim.loop.hrtime() - started_at < 2 * 1e9 then
+				return
+			end
+			for _, item in ipairs(items or {}) do
+				if (tonumber(item.score) or 0) > 0 then
 					return finish(item, nil)
 				end
 			end
