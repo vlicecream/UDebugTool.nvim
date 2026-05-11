@@ -2,8 +2,53 @@ local config = require("udebugtool.config")
 
 local M = {}
 
+local function is_windows()
+	return package.config:sub(1, 1) == "\\"
+end
+
 local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
+end
+
+local function trim_trailing_slashes(path)
+	path = normalize(path or "")
+	if path == "" then
+		return nil
+	end
+	if path == "/" or path:match("^%a:/$") then
+		return path
+	end
+	path = path:gsub("/+$", "")
+	return path ~= "" and path or nil
+end
+
+local function canonicalize_path(path)
+	path = tostring(path or "")
+	path = vim.trim(path)
+	if path == "" then
+		return nil
+	end
+	path = vim.fn.expand(path)
+
+	local absolute
+	if vim.fs and vim.fs.abspath then
+		absolute = vim.fs.abspath(path)
+	else
+		absolute = vim.fn.fnamemodify(path, ":p")
+	end
+
+	absolute = normalize(absolute)
+	local native = is_windows() and absolute:gsub("/", "\\") or absolute
+	local real = (vim.uv or vim.loop).fs_realpath(native) or (vim.uv or vim.loop).fs_realpath(absolute)
+	local canonical = trim_trailing_slashes(real or absolute)
+	if canonical and is_windows() then
+		canonical = canonical:lower()
+	end
+	return canonical
+end
+
+local function path_key(path)
+	return canonicalize_path(path) or trim_trailing_slashes(path) or normalize(path)
 end
 
 local function readable(path)
@@ -19,7 +64,7 @@ local function path_join(...)
 end
 
 local function project_cache_name(project_root)
-	local normalized = normalize(project_root)
+	local normalized = path_key(project_root) or normalize(project_root)
 	local name = vim.fn.fnamemodify(normalized, ":t")
 	local hash = vim.fn.sha256(normalized):sub(1, 12)
 	if name == "" then
@@ -101,7 +146,7 @@ function M.find_project_file(start_path)
 		limit = 1,
 	})[1]
 
-	return found and normalize(found) or nil
+	return found and (path_key(found) or normalize(found)) or nil
 end
 
 function M.find_project_root(start_path)
@@ -109,7 +154,7 @@ function M.find_project_root(start_path)
 	if not project_file then
 		return nil
 	end
-	return normalize(vim.fn.fnamemodify(project_file, ":p:h"))
+	return path_key(vim.fn.fnamemodify(project_file, ":p:h")) or normalize(vim.fn.fnamemodify(project_file, ":p:h"))
 end
 
 function M.find_project_root_from_context()
@@ -157,8 +202,9 @@ function M.find_project_root_from_context()
 end
 
 function M.find_project_file_in_root(project_root)
+	project_root = path_key(project_root) or normalize(project_root)
 	local files = vim.fn.glob(project_root .. "/*.uproject", false, true)
-	return files[1] and normalize(files[1]) or nil
+	return files[1] and (path_key(files[1]) or normalize(files[1])) or nil
 end
 
 function M.read_engine_association(uproject_path)
@@ -180,7 +226,7 @@ function M.is_engine_root(path)
 	if not path or path == "" then
 		return false
 	end
-	path = normalize(path)
+	path = path_key(path) or normalize(path)
 	return vim.fn.isdirectory(path .. "/Engine/Source") == 1
 		or vim.fn.filereadable(path .. "/Engine/Build/Build.version") == 1
 end
@@ -189,7 +235,7 @@ function M.find_engine_root_from_config(association)
 	for _, key in ipairs(engine_association_candidates(association)) do
 		local root = config.values.engine_roots and config.values.engine_roots[key]
 		if M.is_engine_root(root) then
-			return normalize(root)
+			return path_key(root) or normalize(root)
 		end
 	end
 	return nil
@@ -208,7 +254,7 @@ function M.find_engine_root_from_launcher(association)
 
 	for _, item in ipairs(data.InstallationList) do
 		if candidates[item.AppName] and M.is_engine_root(item.InstallLocation) then
-			return normalize(item.InstallLocation)
+			return path_key(item.InstallLocation) or normalize(item.InstallLocation)
 		end
 	end
 	return nil
@@ -238,7 +284,7 @@ function M.find_engine_root_from_registry(association)
 		local name, path = line:match("^(%S+)%s+REG_SZ%s+(.+)$")
 		path = path and vim.trim(path)
 		if name and path and candidates[name] and M.is_engine_root(path) then
-			return normalize(path)
+			return path_key(path) or normalize(path)
 		end
 	end
 
@@ -246,14 +292,14 @@ function M.find_engine_root_from_registry(association)
 end
 
 function M.resolve_engine_root(project_root)
-	project_root = normalize(project_root)
+	project_root = path_key(project_root) or normalize(project_root)
 	local uproject_path = M.find_project_file_in_root(project_root)
 	local association = M.read_engine_association(uproject_path)
 	if not association or association == "" then
 		return nil, "No EngineAssociation in .uproject"
 	end
 	if M.is_engine_root(association) then
-		return normalize(association), association
+		return path_key(association) or normalize(association), association
 	end
 
 	local root = M.find_engine_root_from_config(association)
@@ -266,20 +312,28 @@ function M.resolve_engine_root(project_root)
 end
 
 function M.cached_engine_metadata(project_root)
-	project_root = normalize(project_root)
+	project_root = path_key(project_root) or normalize(project_root)
 	if not project_root or project_root == "" then
 		return nil
 	end
 
 	local registry = read_ucore_registry()
 	local item = registry.projects and registry.projects[project_root]
+	if type(item) ~= "table" then
+		for root, value in pairs(registry.projects or {}) do
+			if (path_key(root) or normalize(root)) == project_root then
+				item = value
+				break
+			end
+		end
+	end
 	if type(item) ~= "table" or not item.engine_root then
 		return nil
 	end
 
 	return {
 		engine_association = item.engine_association,
-		engine_root = normalize(item.engine_root),
+		engine_root = path_key(item.engine_root) or normalize(item.engine_root),
 		engine_id = item.engine_id,
 	}
 end
@@ -343,11 +397,12 @@ function M.game_target_name(root)
 end
 
 function M.build_paths(project_root)
+	project_root = path_key(project_root) or normalize(project_root)
 	local cache_dir = normalize(config.values.cache_dir)
 	local project_cache_dir = path_join(cache_dir, "projects", project_cache_name(project_root))
 	vim.fn.mkdir(project_cache_dir, "p")
 	return {
-		project_root = normalize(project_root),
+		project_root = project_root,
 		cache_dir = project_cache_dir,
 	}
 end
