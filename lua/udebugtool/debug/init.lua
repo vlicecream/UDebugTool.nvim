@@ -61,6 +61,42 @@ local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
 end
 
+local function ps_clear_p4_env_prefix()
+	return table.concat({
+		"Remove-Item Env:P4CONFIG -ErrorAction SilentlyContinue",
+		"Remove-Item Env:P4PORT -ErrorAction SilentlyContinue",
+		"Remove-Item Env:P4USER -ErrorAction SilentlyContinue",
+		"Remove-Item Env:P4CLIENT -ErrorAction SilentlyContinue",
+		"Remove-Item Env:P4CHARSET -ErrorAction SilentlyContinue",
+	}, "; ")
+end
+
+local function env_value(name)
+	local value = vim.fn.getenv(name)
+	if value == nil or value == vim.NIL or value == "" then
+		return "<unset>"
+	end
+	return tostring(value)
+end
+
+local function launch_environment_lines(root, shell_name)
+	return {
+		"LaunchCwd:   " .. tostring(root or ""),
+		"LaunchShell: " .. tostring(shell_name or ""),
+		"P4CONFIG:    " .. env_value("P4CONFIG"),
+		"P4PORT:      " .. env_value("P4PORT"),
+		"P4USER:      " .. env_value("P4USER"),
+		"P4CLIENT:    " .. env_value("P4CLIENT"),
+	}
+end
+
+local function write_ucore_log(tag, fields)
+	local ok, logger = pcall(require, "ucore.log")
+	if ok and logger and type(logger.write) == "function" then
+		logger.write(tag, fields)
+	end
+end
+
 local function output_root_for_session(session)
 	local frame = session and session.current_frame or nil
 	local source_path = normalize(frame and frame.source and frame.source.path or nil)
@@ -2864,13 +2900,25 @@ local function spawn_runtime_process(ctx, callback)
 		"$proc.Id",
 	}, "; ")
 
+	write_ucore_log("udebugtool.unreal_launch", {
+		project = ctx.project_name,
+		program = ctx.program,
+		root = ctx.root,
+		shell = ps,
+		p4_env_mode = "cleared_for_child_process",
+		p4config = env_value("P4CONFIG"),
+		p4port = env_value("P4PORT"),
+		p4user = env_value("P4USER"),
+		p4client = env_value("P4CLIENT"),
+	})
+
 	vim.system({
 		ps,
 		"-NoProfile",
 		"-ExecutionPolicy",
 		"Bypass",
 		"-Command",
-		script,
+		ps_clear_p4_env_prefix() .. "; " .. script,
 	}, { text = true }, function(result)
 		vim.schedule(function()
 			if result.code ~= 0 then
@@ -3074,32 +3122,46 @@ function M.launch(mode_override)
 
 		state.launch_in_progress = true
 		local function do_launch(launch_ctx)
+			local env_lines = launch_environment_lines(launch_ctx.root, vim.fn.executable("pwsh") == 1 and "pwsh" or "powershell")
+			open_unreal_output(launch_ctx.root, {
+				"Project: " .. tostring(launch_ctx.project_name or ""),
+				"Engine:  " .. tostring(launch_ctx.engine_root or ""),
+				"Mode:    " .. tostring(launch_ctx.mode or ""),
+				"Target:  " .. tostring(launch_ctx.target or ""),
+				"Program: " .. tostring(launch_ctx.program or ""),
+				env_lines[1],
+				env_lines[2],
+				env_lines[3],
+				env_lines[4],
+				env_lines[5],
+				env_lines[6],
+				"",
+				"Starting " .. tostring(launch_ctx.display_name or "Unreal") .. "...",
+			}, {
+				focus = true,
+				line_groups = {
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					"UCoreOutputCommand",
+					nil,
+					"UCoreOutputInfo",
+				},
+			})
 			spawn_runtime_process(launch_ctx, function(launch_pid, launch_err)
 				if launch_err then
 					state.launch_in_progress = false
 					stop_unreal_log_tail()
 					return vim.notify("UDebugTool: " .. tostring(launch_err), vim.log.levels.ERROR)
 				end
-
-				open_unreal_output(launch_ctx.root, {
-					"Project: " .. tostring(launch_ctx.project_name or ""),
-					"Engine:  " .. tostring(launch_ctx.engine_root or ""),
-					"Mode:    " .. tostring(launch_ctx.mode or ""),
-					"Target:  " .. tostring(launch_ctx.target or ""),
-					"Program: " .. tostring(launch_ctx.program or ""),
-					"",
-					"Starting " .. tostring(launch_ctx.display_name or "Unreal") .. "...",
-				}, {
-					focus = true,
-					line_groups = {
-						"UCoreOutputCommand",
-						"UCoreOutputCommand",
-						"UCoreOutputCommand",
-						"UCoreOutputCommand",
-						nil,
-						"UCoreOutputInfo",
-					},
-				})
 				ensure_debug_output(launch_ctx.root, nil)
 				start_unreal_log_tail(launch_ctx)
 
