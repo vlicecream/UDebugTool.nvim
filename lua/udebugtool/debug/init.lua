@@ -61,16 +61,6 @@ local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
 end
 
-local function ps_clear_p4_env_prefix()
-	return table.concat({
-		"Remove-Item Env:P4CONFIG -ErrorAction SilentlyContinue",
-		"Remove-Item Env:P4PORT -ErrorAction SilentlyContinue",
-		"Remove-Item Env:P4USER -ErrorAction SilentlyContinue",
-		"Remove-Item Env:P4CLIENT -ErrorAction SilentlyContinue",
-		"Remove-Item Env:P4CHARSET -ErrorAction SilentlyContinue",
-	}, "; ")
-end
-
 local function env_value(name)
 	local value = vim.fn.getenv(name)
 	if value == nil or value == vim.NIL or value == "" then
@@ -2905,7 +2895,6 @@ local function spawn_runtime_process(ctx, callback)
 		program = ctx.program,
 		root = ctx.root,
 		shell = ps,
-		p4_env_mode = "cleared_for_child_process",
 		p4config = env_value("P4CONFIG"),
 		p4port = env_value("P4PORT"),
 		p4user = env_value("P4USER"),
@@ -2918,7 +2907,7 @@ local function spawn_runtime_process(ctx, callback)
 		"-ExecutionPolicy",
 		"Bypass",
 		"-Command",
-		ps_clear_p4_env_prefix() .. "; " .. script,
+		script,
 	}, { text = true }, function(result)
 		vim.schedule(function()
 			if result.code ~= 0 then
