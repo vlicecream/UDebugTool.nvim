@@ -2874,36 +2874,58 @@ local function enumerate_processes(ctx, callback)
 end
 
 local function spawn_runtime_process(ctx, callback)
+	local ps = vim.fn.executable("pwsh") == 1 and "pwsh" or "powershell"
+	local args = {}
+	for _, arg in ipairs(ctx.program_args or {}) do
+		table.insert(args, ps_quote(arg))
+	end
+	local script = table.concat({
+		"$proc = Start-Process -FilePath '"
+			.. tostring(ctx.program):gsub("'", "''")
+			.. "' -ArgumentList @("
+			.. table.concat(args, ", ")
+			.. ") -WorkingDirectory '"
+			.. tostring(ctx.root):gsub("'", "''")
+			.. "' -PassThru",
+		"$proc.Id",
+	}, "; ")
+
 	write_ucore_log("udebugtool.unreal_launch", {
 		project = ctx.project_name,
 		program = ctx.program,
 		root = ctx.root,
-		shell = "direct",
+		shell = ps,
 		p4config = env_value("P4CONFIG"),
 		p4port = env_value("P4PORT"),
 		p4user = env_value("P4USER"),
 		p4client = env_value("P4CLIENT"),
 	})
 
-	local argv = { tostring(ctx.program) }
-	for _, arg in ipairs(ctx.program_args or {}) do
-		table.insert(argv, tostring(arg))
-	end
+	vim.system({
+		ps,
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		script,
+	}, { text = true }, function(result)
+		vim.schedule(function()
+			if result.code ~= 0 then
+				local err = vim.trim(result.stderr ~= "" and result.stderr or result.stdout or "")
+				if err == "" then
+					err = "failed to launch " .. tostring(ctx.display_name or "Unreal process")
+				end
+				return callback(nil, err)
+			end
 
-	local job = vim.fn.jobstart(argv, {
-		detach = true,
-		cwd = ctx.root,
-	})
-	if tonumber(job or 0) <= 0 then
-		return callback(nil, "failed to launch " .. tostring(ctx.display_name or "Unreal process"))
-	end
+			local pid = tonumber(vim.trim(result.stdout or ""))
+			if not pid or pid <= 0 then
+				return callback(nil, "failed to resolve " .. tostring(ctx.display_name or "Unreal process") .. " id")
+			end
 
-	local ok, pid = pcall(vim.fn.jobpid, job)
-	if not ok or not tonumber(pid) or tonumber(pid) <= 0 then
-		return callback(nil, "failed to resolve " .. tostring(ctx.display_name or "Unreal process") .. " id")
-	end
-
-	callback(tonumber(pid), nil)
+			callback(pid, nil)
+		end)
+	end)
 end
 
 local function wait_for_attach_target(ctx, preferred_pid, callback)
@@ -3089,7 +3111,7 @@ function M.launch(mode_override)
 
 		state.launch_in_progress = true
 		local function do_launch(launch_ctx)
-			local env_lines = launch_environment_lines(launch_ctx.root, "direct")
+			local env_lines = launch_environment_lines(launch_ctx.root, vim.fn.executable("pwsh") == 1 and "pwsh" or "powershell")
 			open_unreal_output(launch_ctx.root, {
 				"Project: " .. tostring(launch_ctx.project_name or ""),
 				"Engine:  " .. tostring(launch_ctx.engine_root or ""),
