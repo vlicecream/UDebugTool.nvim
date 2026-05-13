@@ -2908,7 +2908,7 @@ local function spawn_runtime_process(ctx, callback)
 		"Bypass",
 		"-Command",
 		script,
-	}, { text = true }, function(result)
+	}, { text = true, cwd = ctx.root }, function(result)
 		vim.schedule(function()
 			if result.code ~= 0 then
 				local err = vim.trim(result.stderr ~= "" and result.stderr or result.stdout or "")
