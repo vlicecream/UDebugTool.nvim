@@ -40,11 +40,21 @@ local function canonicalize_path(path)
 	absolute = normalize(absolute)
 	local native = is_windows() and absolute:gsub("/", "\\") or absolute
 	local real = (vim.uv or vim.loop).fs_realpath(native) or (vim.uv or vim.loop).fs_realpath(absolute)
-	local canonical = trim_trailing_slashes(real or absolute)
+	return trim_trailing_slashes(real or absolute)
+end
+
+local function comparable_path(path)
+	local canonical = canonicalize_path(path) or trim_trailing_slashes(path) or normalize(path)
 	if canonical and is_windows() then
-		canonical = canonical:lower()
+		return canonical:lower()
 	end
 	return canonical
+end
+
+local function same_path(a, b)
+	local left = comparable_path(a)
+	local right = comparable_path(b)
+	return left ~= nil and right ~= nil and left == right
 end
 
 local function path_key(path)
@@ -321,7 +331,7 @@ function M.cached_engine_metadata(project_root)
 	local item = registry.projects and registry.projects[project_root]
 	if type(item) ~= "table" then
 		for root, value in pairs(registry.projects or {}) do
-			if (path_key(root) or normalize(root)) == project_root then
+			if same_path(path_key(root) or normalize(root), project_root) then
 				item = value
 				break
 			end
