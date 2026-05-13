@@ -44,11 +44,7 @@ local function canonicalize_path(path)
 end
 
 local function comparable_path(path)
-	local canonical = canonicalize_path(path) or trim_trailing_slashes(path) or normalize(path)
-	if canonical and is_windows() then
-		return canonical:lower()
-	end
-	return canonical
+	return canonicalize_path(path) or trim_trailing_slashes(path) or normalize(path)
 end
 
 local function same_path(a, b)
