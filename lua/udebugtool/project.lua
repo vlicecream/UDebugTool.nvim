@@ -1,15 +1,27 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/udebugtool/project.lua
+-- Purpose: Resolve Unreal project roots, engine roots, and cached project metadata.
+-- License: MIT
+
 local config = require("udebugtool.config")
 
 local M = {}
 
+-- Check whether windows.
+-- 检查是否窗口。
 local function is_windows()
 	return package.config:sub(1, 1) == "\\"
 end
 
+-- Normalize path separators in the given path.
+-- 规范化给定路径中的分隔符。
 local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
 end
 
+-- Return the trim trailing slashes.
+-- 返回trimtrailingslashes。
 local function trim_trailing_slashes(path)
 	path = normalize(path or "")
 	if path == "" then
@@ -22,6 +34,8 @@ local function trim_trailing_slashes(path)
 	return path ~= "" and path or nil
 end
 
+-- Return the canonicalize path.
+-- 返回canonicalize路径。
 local function canonicalize_path(path)
 	path = tostring(path or "")
 	path = vim.trim(path)
@@ -43,32 +57,46 @@ local function canonicalize_path(path)
 	return trim_trailing_slashes(real or absolute)
 end
 
+-- Return the comparable path.
+-- 返回comparable路径。
 local function comparable_path(path)
 	return canonicalize_path(path) or trim_trailing_slashes(path) or normalize(path)
 end
 
+-- Check whether path.
+-- 检查是否路径。
 local function same_path(a, b)
 	local left = comparable_path(a)
 	local right = comparable_path(b)
 	return left ~= nil and right ~= nil and left == right
 end
 
+-- Return the path key.
+-- 返回路径键。
 local function path_key(path)
 	return canonicalize_path(path) or trim_trailing_slashes(path) or normalize(path)
 end
 
+-- Return the readable.
+-- 返回readable。
 local function readable(path)
 	return path and vim.fn.filereadable(path) == 1
 end
 
+-- Return the path exists.
+-- 返回路径exists。
 local function path_exists(path)
 	return readable(path) or vim.fn.isdirectory(path) == 1
 end
 
+-- Return the path join.
+-- 返回路径join。
 local function path_join(...)
 	return normalize(table.concat({ ... }, "/"):gsub("//+", "/"))
 end
 
+-- Return the project cache name.
+-- 返回项目缓存名称。
 local function project_cache_name(project_root)
 	local normalized = path_key(project_root) or normalize(project_root)
 	local name = vim.fn.fnamemodify(normalized, ":t")
@@ -79,6 +107,8 @@ local function project_cache_name(project_root)
 	return name .. "-" .. hash
 end
 
+-- Read JSON file.
+-- 读取JSON文件。
 local function read_json_file(path)
 	if vim.fn.filereadable(path) ~= 1 then
 		return nil
@@ -94,12 +124,16 @@ local function read_json_file(path)
 	return data
 end
 
+-- Return the UCore registry path.
+-- 返回UCore注册表路径。
 local function ucore_registry_path()
 	local cache_dir = normalize(vim.fn.stdpath("data") .. "/ucore")
 	vim.fn.mkdir(cache_dir, "p")
 	return cache_dir .. "/registry.json"
 end
 
+-- Read UCore registry.
+-- 读取UCore注册表。
 local function read_ucore_registry()
 	local registry = read_json_file(ucore_registry_path())
 	if type(registry) ~= "table" then
@@ -113,6 +147,8 @@ local function read_ucore_registry()
 	return registry
 end
 
+-- Return the engine association candidates.
+-- 返回engine关联候选项。
 local function engine_association_candidates(association)
 	if not association or association == "" then
 		return {}
@@ -127,6 +163,8 @@ local function engine_association_candidates(association)
 	return items
 end
 
+-- Find project file.
+-- 查找项目文件。
 function M.find_project_file(start_path)
 	start_path = start_path or vim.api.nvim_buf_get_name(0)
 	if start_path == "" then
@@ -155,6 +193,8 @@ function M.find_project_file(start_path)
 	return found and (path_key(found) or normalize(found)) or nil
 end
 
+-- Find project root.
+-- 查找项目根目录。
 function M.find_project_root(start_path)
 	local project_file = M.find_project_file(start_path)
 	if not project_file then
@@ -163,6 +203,8 @@ function M.find_project_root(start_path)
 	return path_key(vim.fn.fnamemodify(project_file, ":p:h")) or normalize(vim.fn.fnamemodify(project_file, ":p:h"))
 end
 
+-- Find project root from context.
+-- 查找从上下文中获取项目根目录。
 function M.find_project_root_from_context()
 	local buf_path = vim.api.nvim_buf_get_name(0)
 	if buf_path and buf_path ~= "" then
@@ -207,12 +249,16 @@ function M.find_project_root_from_context()
 	return nil
 end
 
+-- Find project file in root.
+-- 查找根目录中的项目文件。
 function M.find_project_file_in_root(project_root)
 	project_root = path_key(project_root) or normalize(project_root)
 	local files = vim.fn.glob(project_root .. "/*.uproject", false, true)
 	return files[1] and (path_key(files[1]) or normalize(files[1])) or nil
 end
 
+-- Read engine association.
+-- 读取engine关联。
 function M.read_engine_association(uproject_path)
 	if not uproject_path or vim.fn.filereadable(uproject_path) ~= 1 then
 		return nil
@@ -228,6 +274,8 @@ function M.read_engine_association(uproject_path)
 	return data.EngineAssociation
 end
 
+-- Check whether engine root.
+-- 检查是否engine根目录。
 function M.is_engine_root(path)
 	if not path or path == "" then
 		return false
@@ -237,6 +285,8 @@ function M.is_engine_root(path)
 		or vim.fn.filereadable(path .. "/Engine/Build/Build.version") == 1
 end
 
+-- Find engine root from config.
+-- 查找从配置中获取engine根目录。
 function M.find_engine_root_from_config(association)
 	for _, key in ipairs(engine_association_candidates(association)) do
 		local root = config.values.engine_roots and config.values.engine_roots[key]
@@ -247,6 +297,8 @@ function M.find_engine_root_from_config(association)
 	return nil
 end
 
+-- Find engine root from launcher.
+-- 查找从启动器中获取engine根目录。
 function M.find_engine_root_from_launcher(association)
 	local data = read_json_file("C:/ProgramData/Epic/UnrealEngineLauncher/LauncherInstalled.dat")
 	if type(data) ~= "table" or type(data.InstallationList) ~= "table" then
@@ -266,6 +318,8 @@ function M.find_engine_root_from_launcher(association)
 	return nil
 end
 
+-- Find engine root from registry.
+-- 查找从注册表中获取engine根目录。
 function M.find_engine_root_from_registry(association)
 	if vim.fn.has("win32") ~= 1 then
 		return nil
@@ -297,6 +351,8 @@ function M.find_engine_root_from_registry(association)
 	return nil
 end
 
+-- Resolve engine root.
+-- 解析engine根目录。
 function M.resolve_engine_root(project_root)
 	project_root = path_key(project_root) or normalize(project_root)
 	local uproject_path = M.find_project_file_in_root(project_root)
@@ -317,6 +373,8 @@ function M.resolve_engine_root(project_root)
 	return nil, "Could not resolve Unreal Engine root for EngineAssociation: " .. tostring(association)
 end
 
+-- Return the cached engine metadata.
+-- 返回cachedengine元数据。
 function M.cached_engine_metadata(project_root)
 	project_root = path_key(project_root) or normalize(project_root)
 	if not project_root or project_root == "" then
@@ -344,6 +402,8 @@ function M.cached_engine_metadata(project_root)
 	}
 end
 
+-- Return the engine metadata.
+-- 返回engine元数据。
 function M.engine_metadata(project_root)
 	local cached = M.cached_engine_metadata(project_root)
 	if cached then
@@ -353,6 +413,8 @@ function M.engine_metadata(project_root)
 	return nil, "UCore engine cache missing for project. Run :UCore boot first."
 end
 
+-- Return the project name.
+-- 返回项目名称。
 function M.project_name(root)
 	local project_file = M.find_project_file_in_root(root)
 	if not project_file then
@@ -361,6 +423,8 @@ function M.project_name(root)
 	return vim.fn.fnamemodify(project_file, ":t:r")
 end
 
+-- Return the editor target name.
+-- 返回编辑器目标名称。
 function M.editor_target_name(root)
 	local base_name = M.project_name(root)
 	local preferred = base_name .. "Editor"
@@ -382,6 +446,8 @@ function M.editor_target_name(root)
 	return fallback or preferred
 end
 
+-- Return the game target name.
+-- 返回游戏目标名称。
 function M.game_target_name(root)
 	local base_name = M.project_name(root)
 	local candidates = vim.fn.glob(path_join(root, "Source/*.Target.cs"), false, true)
@@ -402,6 +468,8 @@ function M.game_target_name(root)
 	return fallback or base_name
 end
 
+-- Build paths.
+-- 构建路径。
 function M.build_paths(project_root)
 	project_root = path_key(project_root) or normalize(project_root)
 	local cache_dir = normalize(config.values.cache_dir)

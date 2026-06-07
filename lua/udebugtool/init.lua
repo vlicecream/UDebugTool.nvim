@@ -1,8 +1,16 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/udebugtool/init.lua
+-- Purpose: Coordinate plugin setup, teardown, and default keymap registration.
+-- License: MIT
+
 local M = {}
 
 local initialized = false
 local registered_keymaps = {}
 
+-- Register default keymaps.
+-- 注册defaultkeymaps。
 local function register_default_keymaps()
 	local cfg = require("udebugtool.config").values
 	local keymaps = cfg.keymaps or {}
@@ -35,6 +43,8 @@ local function register_default_keymaps()
 	end
 end
 
+-- Unregister default keymaps.
+-- 取消注册defaultkeymaps。
 local function unregister_default_keymaps()
 	for _, lhs in ipairs(registered_keymaps) do
 		local info = vim.fn.maparg(lhs, "n", false, true)
@@ -45,6 +55,8 @@ local function unregister_default_keymaps()
 	registered_keymaps = {}
 end
 
+-- Reset the requested state.
+-- 重置所需状态。
 function M.reset()
 	pcall(function()
 		require("udebugtool.debug").reset()
@@ -54,6 +66,8 @@ function M.reset()
 	initialized = false
 end
 
+-- Set up the requested state.
+-- 设置所需状态。
 function M.setup(opts)
 	if initialized then
 		M.reset()

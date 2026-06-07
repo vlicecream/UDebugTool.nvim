@@ -1,3 +1,9 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/udebugtool/debug/ui.lua
+-- Purpose: Render the interactive debug dashboard, panels, and watch views.
+-- License: MIT
+
 local config = require("udebugtool.config")
 local project = require("udebugtool.project")
 
@@ -63,6 +69,8 @@ local control_buttons = {
 
 local truncate
 
+-- Return the panel slots that participate in cursorline refresh.
+-- 返回参与 cursorline 刷新的面板槽位。
 local function cursorline_slots()
 	return {
 		state.left,
@@ -80,6 +88,8 @@ local function cursorline_slots()
 	}
 end
 
+-- Return the shared output panel API when it is available.
+-- 在共享输出面板可用时返回对应的 API。
 local function shared_output_panel()
 	local panel = rawget(_G, "__ucore_output_panel_api")
 	if type(panel) == "table" and type(panel.open_tab) == "function" then
@@ -88,19 +98,27 @@ local function shared_output_panel()
 	return nil
 end
 
+-- Return the debug console output key.
+-- 返回调试控制台输出键。
 local function debug_console_output_key()
 	return "workspace:debug-console"
 end
 
+-- Check whether console output is embedded inside the debug UI.
+-- 检查控制台输出是否嵌入在调试 UI 中。
 local function output_embedded_here()
 	local panel = shared_output_panel()
 	return panel and type(panel.host_name) == "function" and panel.host_name() == "udebugtool"
 end
 
+-- Normalize path separators in the given path.
+-- 规范化给定路径中的分隔符。
 local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
 end
 
+-- Return the path join.
+-- 返回路径join。
 local function path_join(...)
 	local parts = {}
 	for _, part in ipairs({ ... }) do
@@ -112,18 +130,26 @@ local function path_join(...)
 	return normalize(table.concat(parts, "/"))
 end
 
+-- Check whether the buffer handle is still valid.
+-- 检查缓冲区句柄当前是否仍然有效。
 local function valid_buf(buf)
 	return buf and vim.api.nvim_buf_is_valid(buf)
 end
 
+-- Check whether the window handle is still valid.
+-- 检查窗口句柄当前是否仍然有效。
 local function valid_win(win)
 	return win and vim.api.nvim_win_is_valid(win)
 end
 
+-- Build the log path used for debug UI layout diagnostics.
+-- 构建调试 UI 布局诊断使用的日志路径。
 local function layout_log_path()
 	return path_join((config.values or {}).cache_dir or (vim.fn.stdpath("cache") .. "/udebugtool"), "debug-ui-layout.log")
 end
 
+-- Append a layout snapshot to the debug UI layout log.
+-- 向调试 UI 布局日志追加一次布局快照。
 local function append_layout_log(tag)
 	local entries = {
 		{ name = "left_anchor", win = state.left.win },
@@ -168,6 +194,8 @@ local function append_layout_log(tag)
 	pcall(vim.fn.writefile, lines, path, "a")
 end
 
+-- Return the current session.
+-- 返回current会话。
 local function current_session()
 	local ok, dap = pcall(require, "dap")
 	if ok and dap then
@@ -176,6 +204,8 @@ local function current_session()
 	return state.session
 end
 
+-- Check whether the window belongs to the debug UI.
+-- 检查该窗口是否属于调试 UI。
 local function is_ui_win(win)
 	return win == state.left.win
 		or win == state.right.win
@@ -191,12 +221,16 @@ local function is_ui_win(win)
 		or win == state.toolbar.win
 end
 
+-- Close win.
+-- 关闭win。
 local function close_win(win)
 	if valid_win(win) then
 		pcall(vim.api.nvim_win_close, win, true)
 	end
 end
 
+-- Close the active hover window if it exists.
+-- 在悬浮窗存在时将其关闭。
 local function close_hover()
 	if valid_win(state.hover.win) then
 		pcall(vim.api.nvim_win_close, state.hover.win, true)
@@ -204,6 +238,8 @@ local function close_hover()
 	state.hover.win = nil
 end
 
+-- Find the best anchor window for building the debug layout.
+-- 查找用于构建调试布局的最佳锚点窗口。
 local function find_anchor_win()
 	local current = vim.api.nvim_get_current_win()
 	if valid_win(current) and not is_ui_win(current) then
@@ -219,6 +255,8 @@ local function find_anchor_win()
 	return current
 end
 
+-- Open a split from the selected anchor window.
+-- 从选定锚点窗口打开一个分屏。
 local function open_split_from_anchor(anchor, cmd)
 	local current = vim.api.nvim_get_current_win()
 	local before = {}
@@ -240,6 +278,8 @@ local function open_split_from_anchor(anchor, cmd)
 	return created or anchor
 end
 
+-- Compute the current debug UI layout geometry.
+-- 计算当前调试 UI 的布局几何信息。
 local function ui_layout()
 	local ui = ((config.values.debug or {}).ui or {})
 	local cols = vim.o.columns
@@ -267,6 +307,8 @@ local function ui_layout()
 	}
 end
 
+-- Build a signature for the current debug UI layout.
+-- 为当前调试 UI 布局构建签名。
 local function current_layout_signature()
 	local layout = ui_layout()
 	return table.concat({
@@ -278,6 +320,8 @@ local function current_layout_signature()
 	}, ":")
 end
 
+-- Ensure the panel slot owns a valid scratch buffer.
+-- 确保面板槽位持有有效的临时缓冲区。
 local function ensure_buf(slot, name, filetype)
 	if valid_buf(slot.buf) then
 		return slot.buf
@@ -297,6 +341,8 @@ local function ensure_buf(slot, name, filetype)
 	return buf
 end
 
+-- Ensure the hover panel owns a valid scratch buffer.
+-- 确保悬浮面板持有有效的临时缓冲区。
 local function ensure_hover_buf()
 	if valid_buf(state.hover.buf) then
 		return state.hover.buf
@@ -314,6 +360,8 @@ local function ensure_hover_buf()
 	return buf
 end
 
+-- Apply the standard window options for a debug panel.
+-- 为调试面板应用标准窗口选项。
 local function setup_window(win, opts)
 	if not valid_win(win) then
 		return
@@ -343,6 +391,8 @@ local function setup_window(win, opts)
 	vim.wo[win].winbar = ""
 end
 
+-- Refresh cursorline state across every debug panel.
+-- 刷新所有调试面板上的 cursorline 状态。
 local function refresh_cursorlines()
 	local current = vim.api.nvim_get_current_win()
 	for _, slot in ipairs(cursorline_slots()) do
@@ -355,6 +405,8 @@ local function refresh_cursorlines()
 	end
 end
 
+-- Ensure cursorline autocmds are registered once.
+-- 确保 cursorline 自动命令只注册一次。
 local function ensure_cursorline_autocmds()
 	if state.cursorline_augroup then
 		return
@@ -373,7 +425,11 @@ local function ensure_cursorline_autocmds()
 	})
 end
 
+-- Apply the panel keymaps for the given debug buffer.
+-- 为给定调试缓冲区应用面板按键映射。
 local function apply_buffer_keymaps(slot_name, buf)
+	-- Register a temporary keymap helper for the current buffer.
+	-- 为当前缓冲区注册一个临时按键映射辅助函数。
 	local function map(lhs, rhs, desc)
 		vim.keymap.set("n", lhs, rhs, {
 			buffer = buf,
@@ -400,6 +456,8 @@ local function apply_buffer_keymaps(slot_name, buf)
 	map("x", M.delete_selected_watch, "UDebugTool delete watch")
 end
 
+-- Build floating window options for a hover popup.
+-- 为悬浮弹窗构建浮动窗口选项。
 local function hover_float_opts(width, height, position, title)
 	local max_height = math.max(8, math.floor((vim.o.lines - vim.o.cmdheight) * 0.45))
 	local max_width = math.max(36, math.floor(vim.o.columns * 0.35))
@@ -421,6 +479,8 @@ local function hover_float_opts(width, height, position, title)
 	}
 end
 
+-- Open a hover popup with the provided lines.
+-- 使用给定文本行打开悬浮弹窗。
 local function open_hover_lines(lines, position, title)
 	close_hover()
 	local buf = ensure_hover_buf()
@@ -450,6 +510,8 @@ local function open_hover_lines(lines, position, title)
 	})
 end
 
+-- Open the left sidebar anchor for the debug UI.
+-- 打开调试 UI 的左侧边栏锚点。
 local function open_left()
 	local buf = ensure_buf(state.left, "UDebugToolLocals", "udebugtool-debug-locals")
 	if valid_win(state.left.win) then
@@ -469,6 +531,8 @@ local function open_left()
 	return win, buf
 end
 
+-- Open the right sidebar anchor for the debug UI.
+-- 打开调试 UI 的右侧边栏锚点。
 local function open_right()
 	local buf = ensure_buf(state.right, "UDebugToolInspect", "udebugtool-debug-inspect")
 	if valid_win(state.right.win) then
@@ -490,6 +554,8 @@ local function open_right()
 	return win, buf
 end
 
+-- Open the bottom tray anchor for the debug UI.
+-- 打开调试 UI 的底部托盘锚点。
 local function open_bottom()
 	local buf = ensure_buf(state.bottom, "UDebugToolStack", "udebugtool-debug-stack")
 	if valid_win(state.bottom.win) then
@@ -511,6 +577,8 @@ local function open_bottom()
 	return win, buf
 end
 
+-- Open the floating toolbar anchor for the debug UI.
+-- 打开调试 UI 的浮动工具栏锚点。
 local function open_toolbar()
 	local buf = ensure_buf(state.toolbar, "UDebugToolToolbar", "udebugtool-debug-toolbar")
 	local layout = ui_layout()
@@ -545,6 +613,8 @@ local function open_toolbar()
 	return win, buf
 end
 
+-- Build the panel title for a keymap group.
+-- 为按键组构建面板标题。
 local function panel_title(keymap_name)
 	local titles = {
 		scopes = " Locals ",
@@ -557,6 +627,8 @@ local function panel_title(keymap_name)
 	return titles[keymap_name]
 end
 
+-- Build the border definition for a keymap group.
+-- 为按键组构建边框定义。
 local function panel_border(keymap_name)
 	local hide_bottom = {
 		scopes = true,
@@ -580,6 +652,8 @@ local function panel_border(keymap_name)
 	}
 end
 
+-- Build floating window configuration for a debug panel.
+-- 为调试面板构建浮动窗口配置。
 local function float_win_config(row, col, width, height, title, border)
 	return {
 		relative = "editor",
@@ -597,6 +671,8 @@ local function float_win_config(row, col, width, height, title, border)
 	}
 end
 
+-- Ensure a debug panel slot is backed by a floating window.
+-- 确保调试面板槽位由浮动窗口承载。
 local function ensure_float_slot(slot, buf, keymap_name, row, col, width, height, opts)
 	opts = opts or {}
 	local win_config = float_win_config(
@@ -639,6 +715,8 @@ local function ensure_float_slot(slot, buf, keymap_name, row, col, width, height
 	return win, buf
 end
 
+-- Close every floating grid window used by the debug UI.
+-- 关闭调试 UI 使用的所有浮动网格窗口。
 local function clear_debug_grid()
 	for _, slot in ipairs({
 		state.left,
@@ -657,6 +735,8 @@ local function clear_debug_grid()
 	end
 end
 
+-- Refresh control button state from the active session.
+-- 根据当前会话刷新控制按钮状态。
 local function refresh_controls_state()
 	local action = nil
 	if valid_win(state.controls.win) and vim.api.nvim_get_current_win() == state.controls.win then
@@ -687,6 +767,8 @@ local function refresh_controls_state()
 	end
 end
 
+-- Ensure toolbar control autocmds are registered once.
+-- 确保工具栏控制自动命令只注册一次。
 local function ensure_controls_autocmds()
 	if state.controls_augroup then
 		return
@@ -706,6 +788,8 @@ local function ensure_controls_autocmds()
 	})
 end
 
+-- Ensure the docked debug containers exist before layout.
+-- 确保布局前已创建停靠式调试容器。
 local function ensure_docked_containers()
 	local layout = ui_layout()
 	local left_buf = ensure_buf(state.left, "UDebugToolSidebar", "udebugtool-debug-sidebar")
@@ -731,12 +815,16 @@ local function ensure_docked_containers()
 	append_layout_log("ensure_docked_containers")
 end
 
+-- Ensure a panel slot is ready to host rendered content.
+-- 确保面板槽位已准备好承载渲染内容。
 local function ensure_panel_slot(slot, buf, keymap_name, row, col, layout, opts)
 	local content_width = math.max(12, layout.sidebar_width - 2)
 	local content_height = math.max(2, layout.tray_height - 2)
 	return ensure_float_slot(slot, buf, keymap_name, row, col, content_width, content_height, opts)
 end
 
+-- Compute cell geometry for the debug grid layout.
+-- 计算调试网格布局的单元格几何信息。
 local function grid_cell_geometry(layout)
 	local outer_width = math.max(14, layout.sidebar_width)
 	local outer_height = math.max(4, layout.tray_height)
@@ -752,6 +840,8 @@ local function grid_cell_geometry(layout)
 	}
 end
 
+-- Build configuration for an inner content window.
+-- 为内部内容窗口构建配置。
 local function inner_win_config(row, col, width, height, focusable)
 	return {
 		relative = "editor",
@@ -767,6 +857,8 @@ local function inner_win_config(row, col, width, height, focusable)
 	}
 end
 
+-- Ensure an inner grid slot is ready for rendering.
+-- 确保内部网格槽位已准备好渲染。
 local function ensure_inner_slot(slot, buf, row, col, width, height, opts)
 	opts = opts or {}
 	local win_config = inner_win_config(row, col, width, height, opts.focusable)
@@ -801,6 +893,8 @@ local function ensure_inner_slot(slot, buf, row, col, width, height, opts)
 	return win, buf
 end
 
+-- Rebuild the floating grid layout for the debug UI.
+-- 重建调试 UI 的浮动网格布局。
 local function rebuild_debug_grid()
 	ensure_docked_containers()
 	local layout = ui_layout()
@@ -817,6 +911,8 @@ local function rebuild_debug_grid()
 	local console_row = cell.row_step * 3
 	local console_col = cell.col_step * 2
 
+	-- Lay out the four-column inspector grid first, then mount the console frame and its inner windows.
+	-- 先铺好四列检查面板网格，再挂载控制台外框和内部窗口。
 	ensure_float_slot(state.scopes, scopes_buf, "scopes", 0, 0, cell.content_width, cell.content_height, { cursorline = true })
 	ensure_float_slot(state.breakpoints, breakpoints_buf, "breakpoints", cell.row_step, 0, cell.content_width, cell.content_height, { cursorline = true })
 	ensure_float_slot(state.stacks, stacks_buf, "stacks", cell.row_step * 2, 0, cell.content_width, cell.content_height, { cursorline = true })
@@ -842,6 +938,8 @@ local function rebuild_debug_grid()
 	append_layout_log("rebuild_debug_grid")
 end
 
+-- Check whether the floating debug grid is ready to render.
+-- 检查调试浮动网格是否已经可渲染。
 local function grid_ready()
 	return valid_win(state.scopes.win)
 		and valid_win(state.breakpoints.win)
@@ -853,16 +951,22 @@ local function grid_ready()
 		and valid_win(state.console.win)
 end
 
+-- Ensure the sidebar layout exists for the current session.
+-- 确保当前会话可用的边栏布局已经存在。
 local function ensure_sidebar_layout()
 	rebuild_debug_grid()
 	append_layout_log("ensure_sidebar_layout")
 end
 
+-- Ensure the tray layout exists for the current session.
+-- 确保当前会话可用的托盘布局已经存在。
 local function ensure_tray_layout()
 	rebuild_debug_grid()
 	append_layout_log("ensure_tray_layout")
 end
 
+-- Rebuild the debug layout when its signature changes.
+-- 在布局签名变化时重建调试布局。
 local function rebuild_layout_if_needed(force)
 	if not M.is_open() then
 		state.layout_signature = current_layout_signature()
@@ -883,12 +987,16 @@ local function rebuild_layout_if_needed(force)
 	state.layout_signature = current_layout_signature()
 end
 
+-- Schedule a deferred refresh of the debug layout.
+-- 调度一次延迟执行的调试布局刷新。
 local function schedule_layout_refresh(force)
 	if state.layout_refresh_pending then
 		return
 	end
 
 	state.layout_refresh_pending = true
+	-- Coalesce resize and focus bursts into one rebuild so the floating layout does not thrash.
+	-- 将连续的尺寸变化和焦点事件合并成一次重建，避免浮动布局频繁抖动。
 	vim.schedule(function()
 		state.layout_refresh_pending = false
 		rebuild_layout_if_needed(force)
@@ -910,6 +1018,8 @@ ensure_layout_autocmds = function()
 	})
 end
 
+-- Write rendered lines, highlights, and item regions into a slot.
+-- 将渲染后的文本行、高亮和条目区域写入槽位。
 local function set_lines(slot, lines, items, highlights, item_regions)
 	local buf = slot.buf
 	if not valid_buf(buf) then
@@ -953,6 +1063,8 @@ local function set_lines(slot, lines, items, highlights, item_regions)
 	end
 end
 
+-- Append a highlight range to the pending highlight list.
+-- 向待应用高亮列表追加一个高亮范围。
 local function add_hl(highlights, group, line, start_col, end_col)
 	table.insert(highlights, {
 		group = group,
@@ -962,6 +1074,8 @@ local function add_hl(highlights, group, line, start_col, end_col)
 	})
 end
 
+-- Define the highlight groups used by the debug UI.
+-- 定义调试 UI 使用的高亮分组。
 local function setup_highlights()
 	vim.api.nvim_set_hl(0, "UDebugToolTitle", { fg = "#D8E5FF", bold = false })
 	vim.api.nvim_set_hl(0, "UDebugToolSection", { fg = "#93C5FD", bold = false })
@@ -995,6 +1109,8 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "UDebugToolCodeFile", { link = "Identifier" })
 end
 
+-- Shorten a path for compact debug UI display.
+-- 压缩路径以便在调试 UI 中紧凑显示。
 local function short_path(path)
 	path = normalize(path or "")
 	if path == "" then
@@ -1014,6 +1130,8 @@ local function short_path(path)
 	return path
 end
 
+-- Return the file name portion of a path.
+-- 返回路径中的文件名部分。
 local function file_name(path)
 	path = normalize(path or "")
 	if path == "" then
@@ -1022,6 +1140,8 @@ local function file_name(path)
 	return vim.fn.fnamemodify(path, ":t")
 end
 
+-- Build the display name for a stack frame row.
+-- 为调用栈帧行构建显示名称。
 local function frame_display_name(frame)
 	local name = tostring(frame and frame.name or "<frame>")
 	local bang = name:find("!", 1, true)
@@ -1057,6 +1177,8 @@ local cpp_builtin_types = {
 	["unsigned"] = true,
 }
 
+-- Find the next non-space character in the text.
+-- 查找文本中的下一个非空白字符。
 local function next_nonspace_char(text, start_idx)
 	for i = start_idx, #text do
 		local ch = text:sub(i, i)
@@ -1067,6 +1189,8 @@ local function next_nonspace_char(text, start_idx)
 	return nil, nil
 end
 
+-- Find the non-space character pair around the index.
+-- 查找指定位置周围的非空白字符对。
 local function surrounding_nonspace_pair(text, index, direction)
 	if direction == "forward" then
 		local _, pos = next_nonspace_char(text, index)
@@ -1085,10 +1209,14 @@ local function surrounding_nonspace_pair(text, index, direction)
 	return ""
 end
 
+-- Check whether the character can appear in an identifier.
+-- 检查该字符是否可以出现在标识符中。
 local function is_identifier_char(ch)
 	return ch ~= nil and ch:match("[%w_]")
 end
 
+-- Add highlight spans for a C++ signature segment.
+-- 为 C++ 签名片段追加高亮区间。
 local function add_cpp_signature_spans(spans, text, start_col)
 	local i = 1
 	while i <= #text do
@@ -1161,6 +1289,8 @@ local function add_cpp_signature_spans(spans, text, start_col)
 	end
 end
 
+-- Add highlight spans for a frame location segment.
+-- 为栈帧位置片段追加高亮区间。
 local function add_frame_location_spans(spans, text, start_col)
 	local colon = text:match("^.*():")
 	if colon then
@@ -1189,6 +1319,8 @@ local function add_frame_location_spans(spans, text, start_col)
 	})
 end
 
+-- Pick the highlight group that matches a debug value.
+-- 为调试值选择匹配的高亮分组。
 local function value_highlight_group(value)
 	value = vim.trim(tostring(value or ""))
 	if value == "" then
@@ -1209,6 +1341,8 @@ local function value_highlight_group(value)
 	return "UDebugToolValue"
 end
 
+-- Build the cache key used for enum value lookups.
+-- 构建枚举值查询使用的缓存键。
 local function enum_cache_key(frame_id, expression)
 	if not frame_id or not expression or expression == "" then
 		return nil
@@ -1216,6 +1350,8 @@ local function enum_cache_key(frame_id, expression)
 	return tostring(frame_id) .. "::" .. tostring(expression)
 end
 
+-- Extract the enum type name from a variable entry.
+-- 从变量条目中提取枚举类型名。
 local function enum_type_name(entry)
 	local raw = tostring(entry and entry.type or "")
 	raw = vim.trim(raw)
@@ -1225,6 +1361,8 @@ local function enum_type_name(entry)
 	return raw
 end
 
+-- Check whether the enum value already includes an annotation.
+-- 检查枚举值是否已经带有注解。
 local function enum_value_already_annotated(value)
 	value = vim.trim(tostring(value or ""))
 	if value == "" then
@@ -1234,6 +1372,8 @@ local function enum_value_already_annotated(value)
 		or value:match("%([%s]*0x[%da-fA-F]+[%s]*%)$") ~= nil
 end
 
+-- Check whether the variable entry behaves like an enum.
+-- 检查该变量条目是否表现得像枚举。
 local function is_enum_like_entry(entry)
 	if type(entry) ~= "table" then
 		return false
@@ -1262,6 +1402,8 @@ local function is_enum_like_entry(entry)
 	return false
 end
 
+-- Sync enum value cache state to the active frame.
+-- 将枚举值缓存状态同步到当前激活栈帧。
 local function sync_enum_value_cache(session)
 	local frame_id = session and session.current_frame and session.current_frame.id or nil
 	if state.enum_frame_id == frame_id then
@@ -1272,6 +1414,8 @@ local function sync_enum_value_cache(session)
 	state.enum_value_pending = {}
 end
 
+-- Request the numeric value for an enum entry.
+-- 请求枚举条目的数值结果。
 local function request_enum_numeric_value(session, entry)
 	if not session or not session.current_frame or not is_enum_like_entry(entry) then
 		return
@@ -1289,6 +1433,8 @@ local function request_enum_numeric_value(session, entry)
 	end
 
 	state.enum_value_pending[key] = true
+	-- Cast enum-like values through `(int)` so the UI can show both symbolic and numeric forms side by side.
+	-- 通过 `(int)` 强制求值枚举类变量，这样界面就能同时显示符号值和数值。
 	session:evaluate({
 		expression = "(int)(" .. expression .. ")",
 		context = "watch",
@@ -1309,6 +1455,8 @@ local function request_enum_numeric_value(session, entry)
 	end)
 end
 
+-- Build the display text for a watched variable value.
+-- 为监视变量值构建显示文本。
 local function display_variable_value(session, entry)
 	local value = tostring(entry and (entry.value or entry.result) or "")
 	if not is_enum_like_entry(entry) then
@@ -1323,10 +1471,14 @@ local function display_variable_value(session, entry)
 		return string.format("%s (%s)", value, numeric)
 	end
 
+	-- Render immediately with the symbolic value, then refresh later if the async numeric lookup succeeds.
+	-- 先立刻渲染符号值，若异步数值查询成功，再在下一轮刷新中补上数字。
 	request_enum_numeric_value(session, entry)
 	return value
 end
 
+-- Check whether the token looks like a hexadecimal value.
+-- 检查该 token 是否看起来像十六进制值。
 local function is_hex_like_token(token)
 	token = tostring(token or "")
 	if token == "" then
@@ -1341,6 +1493,8 @@ local function is_hex_like_token(token)
 	return #token >= 8
 end
 
+-- Add highlight spans for a rendered variable value.
+-- 为渲染后的变量值追加高亮区间。
 local function add_value_spans(spans, text, start_col)
 	local i = 1
 	while i <= #text do
@@ -1447,6 +1601,8 @@ local function add_value_spans(spans, text, start_col)
 	end
 end
 
+-- Build the display location for a stack frame.
+-- 构建调用栈帧的显示位置。
 local function frame_location(frame)
 	local source = frame and frame.source or {}
 	local path = source.path or source.name or "<unknown>"
@@ -1454,6 +1610,8 @@ local function frame_location(frame)
 	return string.format("%s:%d", file_name(path), line)
 end
 
+-- Find the best source window for debug navigation.
+-- 查找最适合调试跳转的源码窗口。
 local function find_source_window()
 	local current = vim.api.nvim_get_current_win()
 	if valid_win(current) and not is_ui_win(current) then
@@ -1469,6 +1627,8 @@ local function find_source_window()
 	return nil
 end
 
+-- Jump to to frame.
+-- 跳转到栈帧。
 local function jump_to_frame(frame)
 	local source = frame and frame.source or {}
 	local path = normalize(source.path or nil)
@@ -1498,6 +1658,8 @@ local function jump_to_frame(frame)
 	end
 end
 
+-- Return the source line text.
+-- 返回源码行text。
 local function source_line_text(path, line)
 	path = normalize(path or "")
 	line = tonumber(line or 0) or 0
@@ -1525,6 +1687,8 @@ local function source_line_text(path, line)
 	return nil
 end
 
+-- Return the console highlight group.
+-- 返回控制台highlight分组。
 local function console_highlight_group(text, explicit)
 	if explicit and explicit ~= "" then
 		return explicit
@@ -1545,6 +1709,8 @@ local function console_highlight_group(text, explicit)
 	return "UDebugToolValue"
 end
 
+-- Return the output console group.
+-- 返回输出控制台分组。
 local function output_console_group(text, explicit)
 	if explicit == "UDebugToolDanger" then
 		return "UCoreOutputError"
@@ -1578,10 +1744,14 @@ truncate = function(text, max_len)
 	return text:sub(1, math.max(0, max_len - 3)) .. "..."
 end
 
+-- Convert text to lower case for comparisons.
+-- 将文本转成小写以便比较。
 local function lower(text)
 	return tostring(text or ""):lower()
 end
 
+-- Return the watch store path.
+-- 返回监视存储路径。
 local function watch_store_path(root)
 	if not root then
 		return nil
@@ -1589,6 +1759,8 @@ local function watch_store_path(root)
 	return path_join(project.build_paths(root).cache_dir, "watches.json")
 end
 
+-- Read JSON.
+-- 读取JSON。
 local function read_json(path)
 	if not path or vim.fn.filereadable(path) ~= 1 then
 		return nil
@@ -1604,6 +1776,8 @@ local function read_json(path)
 	return decoded
 end
 
+-- Write JSON.
+-- 写入JSON。
 local function write_json(path, value)
 	if not path then
 		return false
@@ -1612,6 +1786,8 @@ local function write_json(path, value)
 	return pcall(vim.fn.writefile, vim.split(vim.json.encode(value), "\n", { plain = true }), path)
 end
 
+-- Return the active project root.
+-- 返回active项目根目录。
 local function active_project_root()
 	local frame = state.session and state.session.current_frame or nil
 	local source_path = frame and frame.source and frame.source.path or nil
@@ -1624,6 +1800,8 @@ local function active_project_root()
 	return normalize(project.find_project_root_from_context())
 end
 
+-- Load watches.
+-- 加载监视。
 local function load_watches(root)
 	if not root or ui_layout().persist_watches == false then
 		return {}
@@ -1642,6 +1820,8 @@ local function load_watches(root)
 	return items
 end
 
+-- Save watches.
+-- 保存监视。
 local function save_watches()
 	if ui_layout().persist_watches == false or not state.watch_root then
 		return
@@ -1649,6 +1829,8 @@ local function save_watches()
 	write_json(watch_store_path(state.watch_root), state.watches)
 end
 
+-- Sync watches.
+-- 同步监视。
 local function sync_watches()
 	local root = active_project_root()
 	if not root or state.watch_root == root then
@@ -1664,6 +1846,8 @@ local function sync_watches()
 	end
 end
 
+-- Stop reason text.
+-- 停止reasontext。
 local function stop_reason_text()
 	local stopped = state.stop_event or {}
 	local reason = tostring(stopped.reason or "")
@@ -1691,6 +1875,8 @@ local function stop_reason_text()
 	return label
 end
 
+-- Return the sorted thread ids.
+-- 返回sortedthreadids。
 local function sorted_thread_ids(session)
 	local ids = {}
 	for id, _ in pairs(session and session.threads or {}) do
@@ -1702,6 +1888,8 @@ local function sorted_thread_ids(session)
 	return ids
 end
 
+-- Return the sorted breakpoints.
+-- 返回sorted断点。
 local function sorted_breakpoints()
 	local ok, dap_breakpoints = pcall(require, "dap.breakpoints")
 	if not ok then
@@ -1731,6 +1919,8 @@ local function sorted_breakpoints()
 	return items
 end
 
+-- Return the thread expanded.
+-- 返回threadexpanded。
 local function thread_expanded(thread_id, stopped)
 	local key = "thread:" .. tostring(thread_id)
 	local value = state.expanded[key]
@@ -1740,6 +1930,8 @@ local function thread_expanded(thread_id, stopped)
 	return value
 end
 
+-- Return the variable has children.
+-- 返回变量haschildren。
 local function variable_has_children(variable)
 	local ref = tonumber(variable and variable.variablesReference or 0) or 0
 	local named = tonumber(variable and variable.namedVariables or 0) or 0
@@ -1747,10 +1939,14 @@ local function variable_has_children(variable)
 	return ref > 0 or named > 0 or indexed > 0, ref
 end
 
+-- Return the get children cache.
+-- 返回getchildren缓存。
 local function get_children_cache(ref)
 	return state.children_cache[tostring(ref)]
 end
 
+-- Fetch children.
+-- 获取children。
 local function fetch_children(session, ref, callback)
 	ref = tonumber(ref or 0) or 0
 	if ref <= 0 or not session then
@@ -1788,6 +1984,8 @@ local function fetch_children(session, ref, callback)
 	end)
 end
 
+-- Fetch frame scopes.
+-- 获取栈帧scopes。
 local function fetch_frame_scopes(session, frame, callback)
 	if not frame or not session then
 		return callback()
@@ -1843,6 +2041,8 @@ local function fetch_frame_scopes(session, frame, callback)
 	end)
 end
 
+-- Ensure stack.
+-- 确保调用栈。
 local function ensure_stack(session, callback)
 	if not session or not session.stopped_thread_id then
 		return callback()
@@ -1875,6 +2075,8 @@ local function ensure_stack(session, callback)
 	end)
 end
 
+-- Return the evaluate watches.
+-- 返回evaluate监视。
 local function evaluate_watches(session, callback)
 	if vim.tbl_isempty(state.watches) then
 		return callback()
@@ -1916,6 +2118,8 @@ local function evaluate_watches(session, callback)
 	end
 end
 
+-- Return the new builder.
+-- 返回newbuilder。
 local function new_builder()
 	return {
 		lines = {},
@@ -1925,6 +2129,8 @@ local function new_builder()
 	}
 end
 
+-- Return the push line.
+-- 返回push行。
 local function push_line(builder, text, opts)
 	opts = opts or {}
 	local padding = opts.padding
@@ -1955,6 +2161,8 @@ local function push_line(builder, text, opts)
 	return row
 end
 
+-- Return the push panel header.
+-- 返回push面板header。
 local function push_panel_header(builder, title)
 	title = tostring(title or "")
 	if title ~= "" and not title:match(":$") then
@@ -1963,6 +2171,8 @@ local function push_panel_header(builder, title)
 	push_line(builder, title, { group = "UDebugToolTitle", padding = PANEL_PADDING })
 end
 
+-- Render variable tree.
+-- 渲染变量tree。
 local function render_variable_tree(builder, session, entry, depth, item_kind, item_payload)
 	local has_children, ref = variable_has_children(entry)
 	local key = ref > 0 and ("ref:" .. tostring(ref)) or nil
@@ -2044,6 +2254,8 @@ local function render_variable_tree(builder, session, entry, depth, item_kind, i
 	end
 end
 
+-- Render left.
+-- 渲染left。
 local function render_left(session)
 	local _, buf = open_left()
 	local builder = new_builder()
@@ -2236,6 +2448,8 @@ local function render_left(session)
 	vim.bo[buf].modifiable = false
 end
 
+-- Render stack panel.
+-- 渲染调用栈面板。
 local function render_stack_panel(session)
 	local _, buf = open_bottom()
 	local builder = new_builder()
@@ -2314,6 +2528,8 @@ local function render_stack_panel(session)
 	vim.bo[buf].modifiable = false
 end
 
+-- Render selected children.
+-- 渲染selectedchildren。
 local function render_selected_children(builder, session, ref, depth)
 	local cache = get_children_cache(ref)
 	if not cache then
@@ -2344,6 +2560,8 @@ local function render_selected_children(builder, session, ref, depth)
 	end
 end
 
+-- Render right.
+-- 渲染right。
 local function render_right(session)
 	local _, buf = open_right()
 	local builder = new_builder()
@@ -2420,6 +2638,8 @@ local function render_right(session)
 	vim.bo[buf].modifiable = false
 end
 
+-- Render toolbar.
+-- 渲染工具栏。
 local function render_toolbar(session)
 	local _, buf = open_toolbar()
 	local builder = new_builder()
@@ -2455,6 +2675,8 @@ local function render_toolbar(session)
 	vim.bo[buf].modifiable = false
 end
 
+-- Render scopes panel.
+-- 渲染scopes面板。
 local function render_scopes_panel(session)
 	local buf = ensure_buf(state.scopes, "UDebugToolLocals", "udebugtool-debug-locals")
 	local builder = new_builder()
@@ -2511,6 +2733,8 @@ local function render_scopes_panel(session)
 	vim.bo[buf].modifiable = false
 end
 
+-- Render breakpoints panel.
+-- 渲染断点面板。
 local function render_breakpoints_panel()
 	local buf = ensure_buf(state.breakpoints, "UDebugToolBreakpoints", "udebugtool-debug-breakpoints")
 	local builder = new_builder()
@@ -2581,6 +2805,8 @@ local function render_breakpoints_panel()
 	vim.bo[buf].modifiable = false
 end
 
+-- Return the controls winbar.
+-- 返回控制winbar。
 local function controls_winbar()
 	return table.concat({
 		"%#UDebugToolAccent#  %*",
@@ -2592,6 +2818,8 @@ local function controls_winbar()
 	}, " ")
 end
 
+-- Render stacks panel.
+-- 渲染stacks面板。
 local function render_stacks_panel(session)
 	local buf = ensure_buf(state.stacks, "UDebugToolStacks", "udebugtool-debug-stacks")
 	local builder = new_builder()
@@ -2676,6 +2904,8 @@ local function render_stacks_panel(session)
 	vim.bo[buf].modifiable = false
 end
 
+-- Render watches panel.
+-- 渲染监视面板。
 local function render_watches_panel(session)
 	local buf = ensure_buf(state.watches_panel, "UDebugToolWatches", "udebugtool-debug-watches")
 	local builder = new_builder()
@@ -2742,6 +2972,8 @@ local function render_watches_panel(session)
 	vim.bo[buf].modifiable = false
 end
 
+-- Return the control button group.
+-- 返回控制button分组。
 local function control_button_group(button)
 	if state.pressed_control_action == button.action then
 		return "UDebugToolControlActive"
@@ -2852,6 +3084,8 @@ render_all = function(session)
 	state.layout_signature = current_layout_signature()
 end
 
+-- Jump to to breakpoint.
+-- 跳转到断点。
 local function jump_to_breakpoint(path, line)
 	path = normalize(path or nil)
 	line = tonumber(line or 1) or 1
@@ -2879,6 +3113,8 @@ local function jump_to_breakpoint(path, line)
 	end
 end
 
+-- Toggle item.
+-- 切换条目。
 local function toggle_item(item)
 	if not item then
 		return
@@ -2896,6 +3132,8 @@ local function toggle_item(item)
 	render_all(state.session)
 end
 
+-- Focus thread.
+-- 聚焦thread。
 local function focus_thread(session, thread_id)
 	if not session or not thread_id then
 		return
@@ -2931,6 +3169,8 @@ local function focus_thread(session, thread_id)
 	end)
 end
 
+-- Return the current item.
+-- 返回current条目。
 local function current_item(slot_name)
 	local slot = state[slot_name]
 	if not slot or not valid_win(slot.win) then
@@ -2950,6 +3190,8 @@ local function current_item(slot_name)
 	return slot.items[row]
 end
 
+-- Return the current slot name.
+-- 返回current槽位名称。
 local function current_slot_name()
 	local win = vim.api.nvim_get_current_win()
 	if win == state.scopes.win then
@@ -2973,6 +3215,8 @@ local function current_slot_name()
 	return nil
 end
 
+-- Open the requested state.
+-- 打开所需状态。
 function M.open()
 	setup_highlights()
 	ensure_cursorline_autocmds()
@@ -2996,6 +3240,8 @@ function M.open()
 	state.layout_signature = signature
 end
 
+-- Return the hover under cursor.
+-- 返回悬浮窗undercursor。
 function M.hover_under_cursor()
 	local session = current_session()
 	if not session or not session.current_frame then
@@ -3048,6 +3294,8 @@ function M.hover_under_cursor()
 	end)
 end
 
+-- Close the requested state.
+-- 关闭所需状态。
 function M.close()
 	close_hover()
 	local panel = shared_output_panel()
@@ -3092,20 +3340,28 @@ function M.close()
 	state.pressed_control_action = nil
 end
 
+-- Check whether open.
+-- 检查是否open。
 function M.is_open()
 	return valid_win(state.scopes.win) or valid_win(state.watches_panel.win) or valid_win(state.controls.win) or valid_win(state.console.win)
 end
 
+-- Check whether focused.
+-- 检查是否focused。
 function M.is_focused()
 	local current = vim.api.nvim_get_current_win()
 	return is_ui_win(current)
 end
 
+-- Check whether console focused.
+-- 检查是否控制台focused。
 function M.is_console_focused()
 	local current = vim.api.nvim_get_current_win()
 	return current == state.console.win or current == state.console_tabs.win
 end
 
+-- Focus primary.
+-- 聚焦primary。
 function M.focus_primary()
 	for _, win in ipairs({
 		state.scopes.win,
@@ -3122,6 +3378,8 @@ function M.focus_primary()
 	return false
 end
 
+-- Focus console.
+-- 聚焦控制台。
 function M.focus_console()
 	if valid_win(state.console.win) then
 		pcall(vim.api.nvim_set_current_win, state.console.win)
@@ -3134,6 +3392,8 @@ function M.focus_console()
 	return false
 end
 
+-- Return the mark running.
+-- 返回markrunning。
 function M.mark_running(session)
 	state.session = session
 	state.running = true
@@ -3147,10 +3407,14 @@ function M.mark_running(session)
 	render_all(session)
 end
 
+-- Check whether set breakpoints is muted.
+-- 检查set断点是否处于muted状态。
 function M.set_breakpoints_muted(muted)
 	state.breakpoints_muted = muted == true
 end
 
+-- Refresh the requested state.
+-- 刷新所需状态。
 function M.refresh(session)
 	state.session = session
 	state.running = false
@@ -3178,6 +3442,8 @@ function M.refresh(session)
 	end)
 end
 
+-- Refresh breakpoints.
+-- 刷新断点。
 function M.refresh_breakpoints()
 	if not M.is_open() then
 		return
@@ -3185,6 +3451,8 @@ function M.refresh_breakpoints()
 	render_breakpoints_panel()
 end
 
+-- Activate current item.
+-- 激活current条目。
 function M.activate_current_item(slot_name)
 	slot_name = slot_name or current_slot_name()
 	if not slot_name then
@@ -3301,6 +3569,8 @@ function M.activate_current_item(slot_name)
 	end
 end
 
+-- Return the click item.
+-- 返回click条目。
 function M.click_item(slot_name)
 	slot_name = slot_name or current_slot_name()
 	if not slot_name then
@@ -3324,10 +3594,14 @@ function M.click_item(slot_name)
 	M.activate_current_item(slot_name)
 end
 
+-- Set stop event.
+-- 设置stopevent。
 function M.set_stop_event(body)
 	state.stop_event = body or nil
 end
 
+-- Return the prompt watch.
+-- 返回prompt监视。
 function M.prompt_watch()
 	sync_watches()
 	vim.ui.input({ prompt = "UDebugTool watch expression: " }, function(input)
@@ -3344,6 +3618,8 @@ function M.prompt_watch()
 	end)
 end
 
+-- Return the delete selected watch.
+-- 返回deleteselected监视。
 function M.delete_selected_watch()
 	local slot_name = current_slot_name()
 	local item = slot_name and current_item(slot_name) or nil
@@ -3366,6 +3642,8 @@ function M.delete_selected_watch()
 	M.refresh(current_session())
 end
 
+-- Clear console.
+-- 清理控制台。
 function M.clear_console()
 	state.console_lines = {}
 	state.console_groups = {}
@@ -3384,6 +3662,8 @@ function M.clear_console()
 	end
 end
 
+-- Append console.
+-- 追加控制台。
 function M.append_console(data, opts)
 	opts = opts or {}
 	local lines = type(data) == "table" and data or { tostring(data or "") }
@@ -3427,6 +3707,8 @@ function M.append_console(data, opts)
 	end
 end
 
+-- Reset the requested state.
+-- 重置所需状态。
 function M.reset()
 	M.close()
 	state.session = nil

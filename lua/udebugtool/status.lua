@@ -1,3 +1,9 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/udebugtool/status.lua
+-- Purpose: Render transient status and progress feedback for long-running actions.
+-- License: MIT
+
 local M = {}
 
 local spinner_frames = { "⣾", "⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽" }
@@ -22,12 +28,16 @@ local float_state = {
 	win = nil,
 }
 
+-- Check whether builtin notify.
+-- 检查是否builtinnotify。
 local function uses_builtin_notify()
 	local info = debug.getinfo(vim.notify, "S")
 	local source = tostring(info and info.source or "")
 	return source:find("vim/_core/editor.lua", 1, true) ~= nil
 end
 
+-- Return the panel has spinner items.
+-- 返回面板hasspinner条目。
 local function panel_has_spinner_items()
 	for key, active in pairs(panel.spinner_active_keys) do
 		if active and panel.items[key] then
@@ -37,10 +47,14 @@ local function panel_has_spinner_items()
 	return false
 end
 
+-- Return the spinner frame.
+-- 返回spinner栈帧。
 local function spinner_frame()
 	return spinner_frames[spinner_index] or spinner_frames[1]
 end
 
+-- Render line.
+-- 渲染行。
 local function render_line(key, message)
 	if panel.spinner_active_keys[key] and message and message ~= "" then
 		return string.format("%s %s", message, spinner_frame())
@@ -48,6 +62,8 @@ local function render_line(key, message)
 	return tostring(message or "")
 end
 
+-- Return the panel lines.
+-- 返回面板多行内容。
 local function panel_lines()
 	local lines = {}
 	local seen = {}
@@ -68,6 +84,8 @@ local function panel_lines()
 	return lines
 end
 
+-- Close float.
+-- 关闭浮窗。
 local function close_float()
 	if float_state.win and vim.api.nvim_win_is_valid(float_state.win) then
 		pcall(vim.api.nvim_win_close, float_state.win, true)
@@ -80,6 +98,8 @@ local function close_float()
 	float_state.buf = nil
 end
 
+-- Ensure float buf.
+-- 确保浮窗buf。
 local function ensure_float_buf()
 	if float_state.buf and vim.api.nvim_buf_is_valid(float_state.buf) then
 		return float_state.buf
@@ -93,6 +113,8 @@ local function ensure_float_buf()
 	return buf
 end
 
+-- Return the float text width.
+-- 返回浮窗textwidth。
 local function float_text_width(lines)
 	local width = 0
 	for _, line in ipairs(lines) do
@@ -101,6 +123,8 @@ local function float_text_width(lines)
 	return math.max(width, 1)
 end
 
+-- Return the float display lines.
+-- 返回浮窗display多行内容。
 local function float_display_lines()
 	local lines = panel_lines()
 	if #lines == 0 then
@@ -114,6 +138,8 @@ local function float_display_lines()
 	return lines
 end
 
+-- Render float.
+-- 渲染浮窗。
 local function render_float()
 	local lines = float_display_lines()
 	if #lines == 0 then
@@ -159,6 +185,8 @@ local function render_float()
 	end
 end
 
+-- Render notify.
+-- 渲染notify。
 local function render_notify()
 	local lines = panel_lines()
 	if #lines == 0 then
@@ -186,6 +214,8 @@ local function render_notify()
 	end
 end
 
+-- Render now.
+-- 渲染now。
 local function render_now()
 	if uses_builtin_notify() then
 		render_float()
@@ -197,6 +227,8 @@ local function render_now()
 	render_notify()
 end
 
+-- Render the requested state.
+-- 渲染所需状态。
 local function render()
 	if vim.in_fast_event() then
 		if render_scheduled then
@@ -213,10 +245,14 @@ local function render()
 	render_now()
 end
 
+-- Return the bump dismiss version.
+-- 返回bumpdismissversion。
 local function bump_dismiss_version()
 	panel.dismiss_version = (panel.dismiss_version or 0) + 1
 end
 
+-- Schedule dismiss.
+-- 调度dismiss。
 local function schedule_dismiss(delay_ms)
 	local version = panel.dismiss_version
 	vim.defer_fn(function()
@@ -230,6 +266,8 @@ local function schedule_dismiss(delay_ms)
 	end, delay_ms or 5000)
 end
 
+-- Schedule spinner.
+-- 调度spinner。
 local function schedule_spinner()
 	if spinner_scheduled or not panel_has_spinner_items() then
 		return
@@ -248,6 +286,8 @@ local function schedule_spinner()
 	end, 120)
 end
 
+-- Ensure key.
+-- 确保键。
 local function ensure_key(title)
 	local key = "progress:" .. tostring(title or "progress")
 	for _, existing in ipairs(panel.ordered_keys) do
@@ -259,6 +299,8 @@ local function ensure_key(title)
 	return key
 end
 
+-- Remove key.
+-- 移除键。
 local function remove_key(key)
 	for index = #panel.ordered_keys, 1, -1 do
 		if panel.ordered_keys[index] == key then
@@ -269,6 +311,8 @@ local function remove_key(key)
 	panel.spinner_active_keys[key] = nil
 end
 
+-- Return the progress.
+-- 返回进度。
 function M.progress(title, message)
 	local key = ensure_key(title)
 	panel.items[key] = tostring(message or "")
@@ -279,6 +323,8 @@ function M.progress(title, message)
 	schedule_spinner()
 end
 
+-- Return the progress finish.
+-- 返回进度finish。
 function M.progress_finish(title, message)
 	local key = ensure_key(title)
 	panel.spinner_active_keys[key] = nil
@@ -295,6 +341,8 @@ function M.progress_finish(title, message)
 	end, 5000)
 end
 
+-- Return the progress fail.
+-- 返回进度fail。
 function M.progress_fail(title, message)
 	local key = ensure_key(title)
 	panel.spinner_active_keys[key] = nil

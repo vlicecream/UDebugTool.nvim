@@ -1,3 +1,9 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/udebugtool/debug/init.lua
+-- Purpose: Manage debug adapter setup, launches, breakpoints, and session state.
+-- License: MIT
+
 local config = require("udebugtool.config")
 local project = require("udebugtool.project")
 local status = require("udebugtool.status")
@@ -41,6 +47,8 @@ local state = {
 	},
 }
 
+-- Return the shared output panel API when it is available.
+-- 在共享输出面板可用时返回对应的 API。
 local function shared_output_panel()
 	local panel = rawget(_G, "__ucore_output_panel_api")
 	if type(panel) == "table" and type(panel.append) == "function" then
@@ -49,18 +57,26 @@ local function shared_output_panel()
 	return nil
 end
 
+-- Build the shared output key for Unreal debug messages.
+-- 为 Unreal 调试消息构建共享输出键。
 local function debug_output_key(root)
 	return "workspace:unreal"
 end
 
+-- Build the shared output key for the debug stack view.
+-- 为调试调用栈视图构建共享输出键。
 local function debug_stack_key(root)
 	return "workspace:debug"
 end
 
+-- Normalize path separators in the given path.
+-- 规范化给定路径中的分隔符。
 local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
 end
 
+-- Return the environment value for the given variable name.
+-- 返回指定环境变量名称对应的值。
 local function env_value(name)
 	local value = vim.fn.getenv(name)
 	if value == nil or value == vim.NIL or value == "" then
@@ -69,6 +85,8 @@ local function env_value(name)
 	return tostring(value)
 end
 
+-- Build the launch environment lines for debug output.
+-- 为调试输出构建启动环境信息行。
 local function launch_environment_lines(root, shell_name)
 	return {
 		"LaunchCwd:   " .. tostring(root or ""),
@@ -80,6 +98,8 @@ local function launch_environment_lines(root, shell_name)
 	}
 end
 
+-- Write a structured entry to the UCore log when available.
+-- 在 UCore 日志可用时写入结构化记录。
 local function write_ucore_log(tag, fields)
 	local ok, logger = pcall(require, "ucore.log")
 	if ok and logger and type(logger.write) == "function" then
@@ -87,6 +107,8 @@ local function write_ucore_log(tag, fields)
 	end
 end
 
+-- Resolve the output root for the current debug session.
+-- 解析当前调试会话对应的输出根目录。
 local function output_root_for_session(session)
 	local frame = session and session.current_frame or nil
 	local source_path = normalize(frame and frame.source and frame.source.path or nil)
@@ -100,6 +122,8 @@ local function output_root_for_session(session)
 	return normalize(project.find_project_root_from_context())
 end
 
+-- Append debug output.
+-- 追加调试输出。
 local function append_debug_output(root, message, opts)
 	local panel = shared_output_panel()
 	if not panel or not message or message == "" then
@@ -137,6 +161,8 @@ local function append_debug_output(root, message, opts)
 	})
 end
 
+-- Append console output.
+-- 追加控制台输出。
 local function append_console_output(output, category)
 	if not output or output == "" then
 		return
@@ -163,6 +189,8 @@ local function append_console_output(output, category)
 	end)
 end
 
+-- Open Unreal output.
+-- 打开Unreal输出。
 local function open_unreal_output(root, lines, opts)
 	local panel = shared_output_panel()
 	if not panel then
@@ -190,10 +218,14 @@ local function open_unreal_output(root, lines, opts)
 	return key
 end
 
+-- Keep the debug output signature stable for the current session.
+-- 为当前会话保持调试输出标识稳定。
 local function ensure_debug_output(root, session)
 	return root, session
 end
 
+-- Focus Unreal output.
+-- 聚焦Unreal输出。
 local function focus_unreal_output(root)
 	local panel = shared_output_panel()
 	if not panel then
@@ -202,6 +234,8 @@ local function focus_unreal_output(root)
 	panel.select(debug_output_key(root))
 end
 
+-- Stop the Unreal log tailer and clear its runtime state.
+-- 停止 Unreal 日志跟踪器并清理运行时状态。
 local function stop_unreal_log_tail()
 	local tail = state.unreal_log
 	if tail.timer then
@@ -215,6 +249,8 @@ local function stop_unreal_log_tail()
 	tail.root = nil
 end
 
+-- Build the Unreal log path from the current launch context.
+-- 根据当前启动上下文构建 Unreal 日志路径。
 local function unreal_log_path(ctx)
 	if not ctx or not ctx.root or not ctx.project_name then
 		return nil
@@ -222,6 +258,8 @@ local function unreal_log_path(ctx)
 	return normalize(ctx.root .. "/Saved/Logs/" .. ctx.project_name .. ".log")
 end
 
+-- Pick the highlight group that matches the Unreal log text.
+-- 为 Unreal 日志文本选择匹配的高亮分组。
 local function unreal_log_group(text)
 	local lower_text = tostring(text or ""):lower()
 	if lower_text:find("fatal error", 1, true)
@@ -240,6 +278,8 @@ local function unreal_log_group(text)
 	return nil
 end
 
+-- Append a streamed Unreal log chunk into the shared output panel.
+-- 将流式 Unreal 日志片段追加到共享输出面板。
 local function append_unreal_log_chunk(root, text)
 	local panel = shared_output_panel()
 	if not panel or not root or not text or text == "" then
@@ -279,6 +319,8 @@ local function append_unreal_log_chunk(root, text)
 	})
 end
 
+-- Read the next unread chunk from the Unreal log file.
+-- 读取 Unreal 日志文件中下一段未消费内容。
 local function read_log_delta(path, offset)
 	local fd = vim.loop.fs_open(path, "r", 438)
 	if not fd then
@@ -302,6 +344,8 @@ local function read_log_delta(path, offset)
 	return chunk
 end
 
+-- Start streaming the Unreal log file for the active launch context.
+-- 为当前启动上下文启动 Unreal 日志流式跟踪。
 local function start_unreal_log_tail(ctx, opts)
 	if not ctx then
 		return
@@ -369,6 +413,8 @@ render_stack_tab = function(session, opts)
 	local groups = {}
 	local actions = {}
 
+	-- Return the add.
+	-- 返回add。
 	local function add(text, group, action)
 		local line_index = #lines + 1
 		lines[line_index] = tostring(text or "")
@@ -451,14 +497,20 @@ render_stack_tab = function(session, opts)
 	})
 end
 
+-- Convert text to lower case for comparisons.
+-- 将文本转成小写以便比较。
 local function lower(text)
 	return tostring(text or ""):lower()
 end
 
+-- Check whether windows.
+-- 检查是否窗口。
 local function is_windows()
 	return package.config:sub(1, 1) == "\\"
 end
 
+-- Return the path join.
+-- 返回路径join。
 local function path_join(...)
 	local parts = {}
 	for _, part in ipairs({ ... }) do
@@ -470,34 +522,50 @@ local function path_join(...)
 	return normalize(table.concat(parts, "/"))
 end
 
+-- Return the path exists.
+-- 返回路径exists。
 local function path_exists(path)
 	return path and (vim.fn.filereadable(path) == 1 or vim.fn.isdirectory(path) == 1)
 end
 
+-- Check whether file is readable.
+-- 检查文件是否处于readable状态。
 local function file_readable(path)
 	return path and vim.fn.filereadable(path) == 1
 end
 
+-- Check whether module.
+-- 检查是否模块。
 local function has_module(name)
 	return pcall(require, name)
 end
 
+-- Quote text for safe PowerShell usage.
+-- 为 PowerShell 安全使用转义文本。
 local function ps_quote(text)
 	return "'" .. tostring(text or ""):gsub("'", "''") .. "'"
 end
 
+-- Return the configured debug adapter settings.
+-- 返回已配置的调试适配器设置。
 local function adapter_config()
 	return (config.values.debug or {}).adapter or {}
 end
 
+-- Return the configured Mason package name for the adapter.
+-- 返回适配器配置对应的 Mason 包名。
 local function adapter_package_name()
 	return tostring(adapter_config().package or "cpptools")
 end
 
+-- Check whether adapter auto installation is enabled.
+-- 检查是否启用了适配器自动安装。
 local function adapter_auto_install_enabled()
 	return adapter_config().auto_install ~= false
 end
 
+-- Return the Node command used to launch the adapter.
+-- 返回用于启动适配器的 Node 命令。
 local function adapter_node_command()
 	local command = tostring(adapter_config().node_command or "node")
 	if command ~= "" and vim.fn.executable(command) == 1 then
@@ -506,6 +574,8 @@ local function adapter_node_command()
 	return nil
 end
 
+-- Return the cppvsdbg ext config dir.
+-- 返回cppvsdbgext配置目录。
 local function cppvsdbg_ext_config_dir()
 	if not vim.env.USERPROFILE or vim.env.USERPROFILE == "" then
 		return nil
@@ -513,6 +583,8 @@ local function cppvsdbg_ext_config_dir()
 	return normalize(vim.env.USERPROFILE .. "/.cppvsdbg/extensions")
 end
 
+-- Ensure cppvsdbg ext config dir.
+-- 确保cppvsdbgext配置目录。
 local function ensure_cppvsdbg_ext_config_dir()
 	local dir = cppvsdbg_ext_config_dir()
 	if not dir or dir == "" then
@@ -524,6 +596,8 @@ local function ensure_cppvsdbg_ext_config_dir()
 	return dir
 end
 
+-- Return the Unreal visualizer file.
+-- 返回Unreal可视化器文件。
 local function unreal_visualizer_file(ctx)
 	local engine_root = normalize(ctx and ctx.engine_root or nil)
 	if not engine_root or engine_root == "" then
@@ -544,6 +618,8 @@ local function unreal_visualizer_file(ctx)
 	return nil
 end
 
+-- Return the Mason registry module when it is available.
+-- 在 Mason 注册表模块可用时返回其实例。
 local function mason_registry()
 	local ok, registry = pcall(require, "mason-registry")
 	if ok and registry then
@@ -552,10 +628,14 @@ local function mason_registry()
 	return nil
 end
 
+-- Check whether Mason registry support is available.
+-- 检查 Mason 注册表支持是否可用。
 local function mason_available()
 	return has_module("mason") and mason_registry() ~= nil
 end
 
+-- Build the status message for adapter installation progress.
+-- 构建适配器安装进度对应的状态消息。
 local function adapter_progress_message(percent, detail)
 	percent = math.max(0, math.min(100, math.floor(tonumber(percent) or 0)))
 	detail = vim.trim(tostring(detail or ""))
@@ -565,14 +645,20 @@ local function adapter_progress_message(percent, detail)
 	return string.format("%s %d%%", ADAPTER_PROGRESS_TITLE, percent)
 end
 
+-- Report adapter installation progress to the status UI.
+-- 向状态界面上报适配器安装进度。
 local function adapter_progress(percent, detail)
 	status.progress(ADAPTER_PROGRESS_TITLE, adapter_progress_message(percent, detail))
 end
 
+-- Mark adapter installation progress as finished.
+-- 将适配器安装进度标记为已完成。
 local function adapter_progress_finish(detail)
 	status.progress_finish(ADAPTER_PROGRESS_TITLE, adapter_progress_message(100, detail or "Ready"))
 end
 
+-- Mark adapter installation progress as failed.
+-- 将适配器安装进度标记为失败。
 local function adapter_progress_fail(detail)
 	status.progress_fail(
 		ADAPTER_PROGRESS_TITLE,
@@ -581,6 +667,8 @@ local function adapter_progress_fail(detail)
 	)
 end
 
+-- Parse the numeric progress percentage from adapter output.
+-- 从适配器输出中解析数值进度百分比。
 local function parse_progress_percent(text)
 	local best = nil
 	for token in tostring(text or ""):gmatch("(%d?%d?%d)%%") do
@@ -592,6 +680,8 @@ local function parse_progress_percent(text)
 	return best
 end
 
+-- Normalize adapter progress detail text for display.
+-- 规范化适配器进度详情文本以便显示。
 local function normalize_progress_detail(text)
 	text = tostring(text or ""):gsub("\r\n", "\n"):gsub("\r", "\n")
 	local lines = vim.split(text, "\n", { plain = true })
@@ -607,11 +697,15 @@ local function normalize_progress_detail(text)
 	return ""
 end
 
+-- Format a byte count as a megabyte string.
+-- 将字节数量格式化为兆字节字符串。
 local function format_megabytes(bytes)
 	bytes = tonumber(bytes) or 0
 	return string.format("%.1f MB", bytes / (1024 * 1024))
 end
 
+-- Return the curl command used for download helpers.
+-- 返回下载辅助流程使用的 curl 命令。
 local function curl_command()
 	if vim.fn.executable("curl.exe") == 1 then
 		return "curl.exe"
@@ -622,6 +716,8 @@ local function curl_command()
 	return nil
 end
 
+-- Fetch the remote content length asynchronously.
+-- 异步获取远端内容长度。
 local function fetch_url_content_length_async(url, callback)
 	local curl_cmd = curl_command()
 	if not curl_cmd or not url or url == "" then
@@ -652,6 +748,8 @@ local function fetch_url_content_length_async(url, callback)
 	end)
 end
 
+-- Return the mason install root.
+-- 返回Masoninstall根目录。
 local function mason_install_root()
 	local ok, settings = pcall(require, "mason.settings")
 	if ok and settings and settings.current and settings.current.install_root_dir then
@@ -660,30 +758,44 @@ local function mason_install_root()
 	return normalize(vim.fn.stdpath("data") .. "/mason")
 end
 
+-- Return the cache directory used by the debug tool.
+-- 返回调试工具使用的缓存目录。
 local function cache_dir()
 	return normalize((config.values or {}).cache_dir or (vim.fn.stdpath("cache") .. "/udebugtool"))
 end
 
+-- Return the adapter staging dir.
+-- 返回适配器staging目录。
 local function adapter_staging_dir()
 	return path_join(mason_install_root(), "staging", adapter_package_name())
 end
 
+-- Return the signer install root.
+-- 返回签名器install根目录。
 local function signer_install_root()
 	return path_join(cache_dir(), "tools", "vscode-signer")
 end
 
+-- Return the signer installed path.
+-- 返回签名器installed路径。
 local function signer_installed_path()
 	return path_join(signer_install_root(), "vsda.node")
 end
 
+-- Return the signer archive path.
+-- 返回签名器归档路径。
 local function signer_archive_path()
 	return path_join(signer_install_root(), "vscode-signer.zip")
 end
 
+-- Return the signer extract marker path.
+-- 返回签名器extract标记路径。
 local function signer_extract_marker_path()
 	return path_join(signer_install_root(), "source.txt")
 end
 
+-- Return the vscode archive target.
+-- 返回vscode归档目标。
 local function vscode_archive_target()
 	local machine = lower(((vim.loop.os_uname() or {}).machine) or "")
 	if machine:find("arm64", 1, true) then
@@ -692,10 +804,14 @@ local function vscode_archive_target()
 	return "win32-x64-archive"
 end
 
+-- Return the vscode signer download URL.
+-- 返回vscode签名器下载URL。
 local function vscode_signer_download_url()
 	return "https://update.code.visualstudio.com/latest/" .. vscode_archive_target() .. "/stable"
 end
 
+-- Return the most recently modified file in the directory.
+-- 返回目录中最近修改的文件。
 local function latest_file_in_dir(dir)
 	if not dir or vim.fn.isdirectory(dir) ~= 1 then
 		return nil, nil
@@ -716,28 +832,40 @@ local function latest_file_in_dir(dir)
 	return best_path, best_stat
 end
 
+-- Check whether nvim-dap is available.
+-- 检查 nvim-dap 是否可用。
 local function dap_available()
 	return has_module("dap")
 end
 
+-- Notify the user when nvim-dap is unavailable.
+-- 在 nvim-dap 不可用时通知用户。
 local function notify_missing_dap()
 	vim.notify("UDebugTool requires nvim-dap", vim.log.levels.WARN)
 end
 
+-- Check whether the debug UI should auto open.
+-- 检查调试 UI 是否应当自动打开。
 local function auto_open_ui_enabled()
 	local ui_config = ((config.values.debug or {}).ui or {})
 	return ui_config.auto_open ~= false
 end
 
+-- Check whether the debug UI should auto close.
+-- 检查调试 UI 是否应当自动关闭。
 local function auto_close_ui_enabled()
 	local ui_config = ((config.values.debug or {}).ui or {})
 	return ui_config.auto_close ~= false
 end
 
+-- Check whether the window handle is still valid.
+-- 检查窗口句柄当前是否仍然有效。
 local function valid_win(win)
 	return win and vim.api.nvim_win_is_valid(win)
 end
 
+-- Check whether the buffer can host source navigation.
+-- 检查该缓冲区是否可以承载源码跳转。
 local function buffer_allows_source(bufnr)
 	if not bufnr or bufnr == 0 or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
@@ -752,6 +880,8 @@ local function buffer_allows_source(bufnr)
 	return true
 end
 
+-- Find a normal source window for debug navigation.
+-- 查找可用于调试跳转的普通源码窗口。
 local function normal_source_window(win)
 	if not valid_win(win) then
 		return false
@@ -759,6 +889,8 @@ local function normal_source_window(win)
 	return buffer_allows_source(vim.api.nvim_win_get_buf(win))
 end
 
+-- Find the best source window for debug navigation.
+-- 查找最适合调试跳转的源码窗口。
 local function find_source_window()
 	local current = vim.api.nvim_get_current_win()
 	if normal_source_window(current) then
@@ -797,6 +929,8 @@ jump_to_frame = function(frame)
 	end
 end
 
+-- Check whether the stopped frame is meaningful to the user.
+-- 检查当前停止栈帧是否对用户有意义。
 local function stop_frame_is_meaningful(frame)
 	if not frame then
 		return false
@@ -820,14 +954,20 @@ local function stop_frame_is_meaningful(frame)
 	return true
 end
 
+-- Return the source path for the given stack frame.
+-- 返回给定栈帧对应的源码路径。
 local function frame_source_path(frame)
 	return normalize(frame and frame.source and frame.source.path or "")
 end
 
+-- Return the source name for the given stack frame.
+-- 返回给定栈帧对应的源码名称。
 local function frame_source_name(frame)
 	return lower(frame and frame.source and frame.source.name or "")
 end
 
+-- Score a stack frame for source selection heuristics.
+-- 为源码选择启发式计算栈帧分数。
 local function frame_score(frame, root)
 	if not frame then
 		return 0
@@ -866,6 +1006,8 @@ local function frame_score(frame, root)
 	return 40
 end
 
+-- Update the active frame tracked on the debug session.
+-- 更新调试会话上记录的当前激活栈帧。
 local function set_session_frame(session, thread_id, frame)
 	if not session or not frame then
 		return
@@ -897,6 +1039,8 @@ activate_stack_frame = function(session, thread_id, frame)
 	end
 end
 
+-- Fetch stack frames for the given thread.
+-- 获取指定线程的调用栈帧。
 local function fetch_thread_frames(session, thread_id, callback)
 	if not session or not thread_id then
 		return callback(nil, {})
@@ -923,6 +1067,8 @@ local function fetch_thread_frames(session, thread_id, callback)
 	end)
 end
 
+-- Resolve the most useful stop frame for the current session.
+-- 为当前会话解析最有价值的停止栈帧。
 local function resolve_best_stop_frame(session, callback)
 	if not session then
 		return callback(nil, nil, 0)
@@ -955,6 +1101,8 @@ local function resolve_best_stop_frame(session, callback)
 		local best_frame, best_thread_id, best_score = session.current_frame, session.stopped_thread_id, frame_score(session.current_frame, root)
 		local index = 1
 
+		-- Evaluate one thread's frames and keep the strongest source-location candidate.
+		-- 评估单个线程的栈帧，并保留最适合作为源码跳转目标的候选项。
 		local function consider(thread_id, frames)
 			for _, frame in ipairs(frames or {}) do
 				local score = frame_score(frame, root)
@@ -970,6 +1118,8 @@ local function resolve_best_stop_frame(session, callback)
 			return false
 		end
 
+		-- Fetch thread stacks sequentially so adapter requests stay predictable and easy to cancel.
+		-- 按顺序拉取线程调用栈，避免适配器请求过度并发，便于稳定取消。
 		local function step()
 			if index > #ids then
 				return callback(best_frame, best_thread_id, best_score)
@@ -989,11 +1139,15 @@ local function resolve_best_stop_frame(session, callback)
 	end)
 end
 
+-- Retry stop frame resolution until a useful frame appears.
+-- 重试停止栈帧解析直到出现有价值的栈帧。
 local function wait_for_best_stop_frame(session, attempts, delay_ms, callback)
 	attempts = math.max(0, tonumber(attempts) or 0)
 	delay_ms = math.max(0, tonumber(delay_ms) or 0)
 	local tries = 0
 
+	-- Return the run.
+	-- 返回run。
 	local function run()
 		resolve_best_stop_frame(session, function(frame, thread_id, score)
 			if score >= 180 or tries >= attempts then
@@ -1008,12 +1162,16 @@ local function wait_for_best_stop_frame(session, attempts, delay_ms, callback)
 	run()
 end
 
+-- Check whether the path points to a header file.
+-- 检查该路径是否指向头文件。
 local function is_header_file(path)
 	local ext = tostring(normalize(path) or ""):match("%.([^.]*)$")
 	ext = ext and ext:lower() or ""
 	return ext == "h" or ext == "hpp" or ext == "hh" or ext == "hxx" or ext == "inl"
 end
 
+-- Build source file candidates for a header path.
+-- 为头文件路径构建对应的源码候选项。
 local function header_to_source_candidates(path)
 	path = normalize(path or "")
 	if path == "" then
@@ -1051,6 +1209,8 @@ local function header_to_source_candidates(path)
 	return result
 end
 
+-- Find an existing buffer for the given file path.
+-- 查找与给定文件路径对应的已有缓冲区。
 local function find_buffer_for_path(path)
 	path = normalize(path)
 	if not path or path == "" then
@@ -1085,6 +1245,8 @@ ensure_buffer = function(path)
 	return bufnr
 end
 
+-- Return the current lines for the given file path.
+-- 返回给定文件路径当前对应的文本行。
 local function lines_for_path(path)
 	local bufnr = ensure_buffer(path)
 	if bufnr and vim.api.nvim_buf_is_loaded(bufnr) then
@@ -1101,10 +1263,14 @@ local function lines_for_path(path)
 	return {}
 end
 
+-- Normalize repeated whitespace in the given text.
+-- 规范化给定文本中的重复空白。
 local function normalize_space(text)
 	return tostring(text or ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
 end
 
+-- Find a nearby C++ function signature around the target line.
+-- 查找目标行附近的 C++ 函数签名。
 local function find_function_signature(lines, opts)
 	local signature = normalize_space(opts.signature)
 	local locator = opts.locator or opts.signature
@@ -1142,6 +1308,8 @@ local function find_function_signature(lines, opts)
 	return nil
 end
 
+-- Find the enclosing class name for the target line.
+-- 查找目标行所在的外围类名。
 local function find_enclosing_class_name(lines, line)
 	for index = math.min(line, #lines), 1, -1 do
 		local text = normalize_space(lines[index])
@@ -1155,6 +1323,8 @@ local function find_enclosing_class_name(lines, line)
 	return nil
 end
 
+-- Extract the declaration fragment around the target line.
+-- 提取目标行附近的声明片段。
 local function extract_declaration_fragment(lines, line)
 	local parts = {}
 	local limit = math.min(#lines, line + 6)
@@ -1176,6 +1346,8 @@ local function extract_declaration_fragment(lines, line)
 	return table.concat(parts, "\n")
 end
 
+-- Parse a declaration fragment into a comparable signature.
+-- 将声明片段解析成可比较的签名。
 local function parse_declaration_signature(text)
 	if not text or text == "" then
 		return nil
@@ -1201,10 +1373,14 @@ local function parse_declaration_signature(text)
 	}
 end
 
+-- Build candidate implementation names for a declaration.
+-- 为声明构建候选实现名称。
 local function implementation_target_names(name)
 	local seen = {}
 	local items = {}
 
+	-- Collect every UE-generated implementation suffix that might hold the real breakpoint site.
+	-- 收集 UE 生成代码可能使用的实现后缀，便于定位真实断点落点。
 	local function add(value)
 		if value and value ~= "" and not seen[value] then
 			seen[value] = true
@@ -1218,6 +1394,8 @@ local function implementation_target_names(name)
 	return items
 end
 
+-- Resolve a concrete source target for a header breakpoint.
+-- 为头文件断点解析具体的源码目标。
 local function resolve_header_breakpoint_target(root, _bufnr, file_path, line, _character, callback)
 	if not is_header_file(file_path) then
 		return callback(nil)
@@ -1267,6 +1445,8 @@ local function resolve_header_breakpoint_target(root, _bufnr, file_path, line, _
 	callback(nil)
 end
 
+-- Build the breakpoint store path for the project root.
+-- 为项目根目录构建断点存储路径。
 local function breakpoint_store_path(root)
 	if not root then
 		return nil
@@ -1275,6 +1455,8 @@ local function breakpoint_store_path(root)
 	return path_join(paths.cache_dir, "breakpoints.json")
 end
 
+-- Write JSON.
+-- 写入JSON。
 local function write_json(path, value)
 	if not path then
 		return false
@@ -1286,6 +1468,8 @@ local function write_json(path, value)
 	return pcall(vim.fn.writefile, vim.split(vim.json.encode(value), "\n"), path)
 end
 
+-- Read JSON.
+-- 读取JSON。
 local function read_json(path)
 	if not path or vim.fn.filereadable(path) ~= 1 then
 		return nil
@@ -1301,11 +1485,15 @@ local function read_json(path)
 	return value
 end
 
+-- Collect default debug adapter path candidates.
+-- 收集默认调试适配器路径候选项。
 local function default_adapter_path_candidates()
 	local candidates = {}
 	local data_dir = normalize(vim.fn.stdpath("data"))
 	local home = normalize(vim.loop.os_homedir())
 
+	-- Record candidate adapter paths first, then validate them later in one pass.
+	-- 先收集候选适配器路径，再在后续流程里统一验证是否可用。
 	local function add(path)
 		if path and path ~= "" then
 			table.insert(candidates, normalize(path))
@@ -1319,6 +1507,8 @@ local function default_adapter_path_candidates()
 
 	local extension_roots = {}
 	local seen_roots = {}
+	-- Keep each extension root only once so overlapping env vars do not duplicate the same tree.
+	-- 每个扩展根目录只保留一次，避免多个环境变量重复指向同一棵目录树。
 	local function add_root(path)
 		path = normalize(path)
 		if not path or path == "" or seen_roots[path] then
@@ -1328,6 +1518,8 @@ local function default_adapter_path_candidates()
 		table.insert(extension_roots, path)
 	end
 
+	-- Join an optional environment root with a suffix only when the variable is actually defined.
+	-- 仅在环境变量存在时，才把它与后缀拼接成候选路径。
 	local function env_join(name, suffix)
 		local base = vim.env[name]
 		if not base or base == "" then
@@ -1390,6 +1582,8 @@ local function default_adapter_path_candidates()
 	return candidates
 end
 
+-- Return the command that provides the debug adapter.
+-- 返回提供调试适配器的命令。
 local function adapter_source_command()
 	local adapter = adapter_config()
 	if adapter.command and file_readable(adapter.command) then
@@ -1403,13 +1597,19 @@ local function adapter_source_command()
 	return nil
 end
 
+-- Return the resolved debug adapter command.
+-- 返回解析后的调试适配器命令。
 local function adapter_command()
 	return adapter_source_command()
 end
 
+-- Collect default adapter signer path candidates.
+-- 收集默认适配器签名器路径候选项。
 local function default_signer_path_candidates()
 	local candidates = {}
 
+	-- Return the add.
+	-- 返回add。
 	local function add(path)
 		if path and path ~= "" then
 			table.insert(candidates, normalize(path))
@@ -1441,6 +1641,8 @@ local function default_signer_path_candidates()
 	return candidates
 end
 
+-- Return the resolved signer path for reverse handshake support.
+-- 返回用于反向握手支持的签名器路径。
 local function adapter_signer_path()
 	local adapter = adapter_config()
 	if adapter.signer and file_readable(adapter.signer) then
@@ -1454,6 +1656,8 @@ local function adapter_signer_path()
 	return nil
 end
 
+-- Sign a reverse handshake value asynchronously.
+-- 异步签名反向握手值。
 local function sign_handshake_value(value, callback)
 	local node = adapter_node_command()
 	if not node then
@@ -1493,6 +1697,8 @@ local function sign_handshake_value(value, callback)
 	end)
 end
 
+-- Install the reverse handshake signer asynchronously.
+-- 异步安装反向握手签名器。
 local function install_signer_async(callback)
 	local root = signer_install_root()
 	local archive = signer_archive_path()
@@ -1510,6 +1716,8 @@ local function install_signer_async(callback)
 		last_change = vim.loop.hrtime(),
 	}
 
+	-- Stop the progress watcher that estimates download health from archive growth.
+	-- 停止通过归档文件增长来估算下载健康度的进度监视器。
 	local function stop_watch()
 		if watch.timer then
 			watch.timer:stop()
@@ -1518,6 +1726,8 @@ local function install_signer_async(callback)
 		end
 	end
 
+	-- Convert archive growth into coarse progress so long signer downloads still feel alive.
+	-- 将归档文件增长转换为粗粒度进度，让签名器长时间下载时界面仍有反馈。
 	local function update_watch()
 		local stat = vim.loop.fs_stat(archive)
 		if not stat or stat.type ~= "file" then
@@ -1564,6 +1774,8 @@ local function install_signer_async(callback)
 	watch.timer = vim.loop.new_timer()
 	watch.timer:start(0, 1000, vim.schedule_wrap(update_watch))
 
+	-- Return the extract archive.
+	-- 返回extract归档。
 	local function extract_archive()
 		adapter_progress(70, "Extracting Signer")
 		local script = table.concat({
@@ -1651,6 +1863,8 @@ local function install_signer_async(callback)
 	end)
 end
 
+-- Handle a reverse handshake request from the adapter.
+-- 处理来自适配器的反向握手请求。
 local function handle_reverse_handshake(session, request)
 	local value = (((request or {}).arguments or {}).value)
 	if not value or tostring(value) == "" then
@@ -1679,6 +1893,8 @@ local function handle_reverse_handshake(session, request)
 	end)
 end
 
+-- Build the command-line arguments for the debug adapter.
+-- 构建调试适配器的命令行参数。
 local function adapter_args()
 	local adapter = adapter_config()
 	local args = { "--interpreter=vscode" }
@@ -1694,6 +1910,8 @@ local function adapter_args()
 	return args
 end
 
+-- Register the UDebugTool adapter with nvim-dap.
+-- 向 nvim-dap 注册 UDebugTool 适配器。
 local function register_dap_adapter(command)
 	local dap = require("dap")
 	dap.adapters.cppvsdbg = {
@@ -1710,6 +1928,8 @@ local function register_dap_adapter(command)
 	return true, command
 end
 
+-- Ensure the debug adapter is registered before use.
+-- 确保调试适配器在使用前已经注册。
 local function ensure_dap_adapter()
 	if state.adapter_registered then
 		return true, adapter_command()
@@ -1740,6 +1960,8 @@ local function ensure_dap_adapter()
 	return register_dap_adapter(command)
 end
 
+-- Resolve queued adapter waiters with the installation result.
+-- 使用安装结果完成排队中的适配器等待者。
 local function finish_adapter_waiters(ok, payload)
 	state.adapter_installing = false
 	local waiters = state.adapter_waiters
@@ -1749,12 +1971,16 @@ local function finish_adapter_waiters(ok, payload)
 	end
 end
 
+-- Queue a callback that waits for adapter readiness.
+-- 登记一个等待适配器就绪的回调。
 local function queue_adapter_waiter(callback)
 	if callback then
 		table.insert(state.adapter_waiters, callback)
 	end
 end
 
+-- Ensure the debug adapter is ready asynchronously.
+-- 异步确保调试适配器已经就绪。
 local function ensure_dap_adapter_async(callback, opts)
 	opts = opts or {}
 	local silent = opts.silent == true
@@ -1788,6 +2014,8 @@ local function ensure_dap_adapter_async(callback, opts)
 		last_change = vim.loop.hrtime(),
 	}
 
+	-- Fail the requested state.
+	-- 标记所需状态失败。
 	local function fail(message)
 		if download_watch.timer then
 			download_watch.timer:stop()
@@ -1798,12 +2026,16 @@ local function ensure_dap_adapter_async(callback, opts)
 		finish_adapter_waiters(false, message)
 	end
 
+	-- Return the report progress.
+	-- 返回report进度。
 	local function report_progress(percent, detail)
 		percent = math.max(reported_percent, math.floor(tonumber(percent) or 0))
 		reported_percent = math.min(percent, 100)
 		adapter_progress(reported_percent, detail)
 	end
 
+	-- Stop download watch.
+	-- 停止下载监视。
 	local function stop_download_watch()
 		if download_watch.timer then
 			download_watch.timer:stop()
@@ -1812,6 +2044,8 @@ local function ensure_dap_adapter_async(callback, opts)
 		end
 	end
 
+	-- Update download watch.
+	-- 更新下载监视。
 	local function update_download_watch()
 		local _, stat = latest_file_in_dir(adapter_staging_dir())
 		if not stat then
@@ -1851,6 +2085,8 @@ local function ensure_dap_adapter_async(callback, opts)
 		report_progress(percent, detail)
 	end
 
+	-- Return the maybe fetch download size.
+	-- 返回maybefetch下载size。
 	local function maybe_fetch_download_size(url)
 		if not url or url == "" or download_watch.total_bytes then
 			return
@@ -1864,6 +2100,8 @@ local function ensure_dap_adapter_async(callback, opts)
 		end)
 	end
 
+	-- Return the maybe start download watch.
+	-- 返回maybestart下载监视。
 	local function maybe_start_download_watch(url)
 		maybe_fetch_download_size(url)
 		if download_watch.timer then
@@ -1876,6 +2114,8 @@ local function ensure_dap_adapter_async(callback, opts)
 		end))
 	end
 
+	-- Attach handle progress.
+	-- 附加handle进度。
 	local function attach_handle_progress(handle)
 		if not handle then
 			return
@@ -1889,6 +2129,8 @@ local function ensure_dap_adapter_async(callback, opts)
 			end
 		end))
 
+		-- Return the on chunk.
+		-- 返回chunk。
 		local function on_chunk(chunk)
 			local detail = normalize_progress_detail(chunk)
 			local percent = parse_progress_percent(chunk)
@@ -1907,6 +2149,8 @@ local function ensure_dap_adapter_async(callback, opts)
 		handle:on("stderr", vim.schedule_wrap(on_chunk))
 	end
 
+	-- Complete the requested state.
+	-- 完成所需状态。
 	local function complete()
 		stop_download_watch()
 		state.adapter_registered = false
@@ -1922,6 +2166,8 @@ local function ensure_dap_adapter_async(callback, opts)
 		end
 	end
 
+	-- Return the watch package.
+	-- 返回监视包。
 	local function watch_package(pkg)
 		if pkg:is_installed() then
 			report_progress(95, "Finalizing")
@@ -1955,6 +2201,8 @@ local function ensure_dap_adapter_async(callback, opts)
 		end
 	end
 
+	-- Return the install adapter with mason.
+	-- 返回带有Mason的install适配器。
 	local function install_adapter_with_mason()
 		local registry = mason_registry()
 		if not registry then
@@ -1980,6 +2228,8 @@ local function ensure_dap_adapter_async(callback, opts)
 		end))
 	end
 
+	-- Continue after signer.
+	-- 继续after签名器。
 	local function continue_after_signer()
 		local ready, result = ensure_dap_adapter()
 		if ready then
@@ -2016,6 +2266,8 @@ local function ensure_dap_adapter_async(callback, opts)
 	end)
 end
 
+-- Build the debug project context for the given root.
+-- 为给定根目录构建调试项目上下文。
 local function project_context(root)
 	root = root or project.find_project_root_from_context()
 	if not root then
@@ -2037,6 +2289,8 @@ local function project_context(root)
 	}, nil
 end
 
+-- Build the launch context for the selected startup mode.
+-- 为选定启动模式构建启动上下文。
 local function launch_context(root, mode_override)
 	local profile, err = unreal.launch_profile(root, mode_override)
 	if not profile then
@@ -2061,6 +2315,8 @@ local function launch_context(root, mode_override)
 	}, nil
 end
 
+-- Check whether the path belongs to the current launch context.
+-- 检查该路径是否属于当前启动上下文。
 local function belongs_to_context(path, ctx)
 	path = lower(normalize(path))
 	if path == "" then
@@ -2081,6 +2337,8 @@ local function belongs_to_context(path, ctx)
 	return false
 end
 
+-- Return the sign name used for redirected breakpoint markers.
+-- 返回重定向断点标记使用的 sign 名称。
 local function display_sign_name()
 	if vim.fn.sign_getdefined("UDebugToolBreakpoint") ~= nil and #vim.fn.sign_getdefined("UDebugToolBreakpoint") > 0 then
 		return "UDebugToolBreakpoint"
@@ -2095,6 +2353,8 @@ local function display_sign_name()
 	return "UDebugToolBreakpoint"
 end
 
+-- Refresh breakpoint data shown in the debug UI.
+-- 刷新调试 UI 中显示的断点数据。
 local function refresh_debug_ui_breakpoints()
 	local ok_ui, debug_ui = pcall(require, "udebugtool.debug.ui")
 	if not ok_ui or type(debug_ui) ~= "table" or type(debug_ui.is_open) ~= "function" or not debug_ui.is_open() then
@@ -2116,6 +2376,8 @@ local function refresh_debug_ui_breakpoints()
 	end)
 end
 
+-- Define or refresh a sign with the configured highlight style.
+-- 按配置高亮样式定义或刷新 sign。
 local function define_or_update_sign(name, fallback)
 	vim.fn.sign_define(name, vim.deepcopy(fallback or {}))
 end
@@ -2165,6 +2427,8 @@ apply_breakpoint_sign_style = function()
 	})
 end
 
+-- Set up the sign definitions used by debug markers.
+-- 设置调试标记使用的 sign 定义。
 local function setup_debug_marker_signs()
 	vim.api.nvim_set_hl(0, "UDebugToolBreakpointMarker", { fg = "#F44747", bold = true })
 	vim.api.nvim_set_hl(0, "UDebugToolBreakpointMutedMarker", { fg = "#6B7280", bold = true })
@@ -2181,6 +2445,8 @@ local function setup_debug_marker_signs()
 	})
 end
 
+-- Place a redirected display sign at the given file and line.
+-- 在给定文件与行号放置重定向显示 sign。
 local function place_display_sign(path, line)
 	local bufnr = ensure_buffer(path)
 	if not bufnr then
@@ -2194,6 +2460,8 @@ local function place_display_sign(path, line)
 	return bufnr, sign_id
 end
 
+-- Return the placed line for the given sign identifier.
+-- 返回给定 sign 标识符实际放置的行号。
 local function sign_line(bufnr, sign_id)
 	if not bufnr or not sign_id or not vim.api.nvim_buf_is_valid(bufnr) then
 		return nil
@@ -2208,6 +2476,8 @@ local function sign_line(bufnr, sign_id)
 	return nil
 end
 
+-- Remove a redirected display sign from the editor.
+-- 从编辑器中移除重定向显示 sign。
 local function unplace_display_sign(entry)
 	if entry.display_bufnr and entry.display_sign_id then
 		pcall(vim.fn.sign_unplace, redirect_group, {
@@ -2217,6 +2487,8 @@ local function unplace_display_sign(entry)
 	end
 end
 
+-- Return the actual resolved line for a redirected breakpoint entry.
+-- 返回重定向断点条目解析后的实际行号。
 local function actual_line(entry)
 	if not entry.actual_bufnr or not entry.actual_mark_id or not vim.api.nvim_buf_is_valid(entry.actual_bufnr) then
 		return entry.actual_line
@@ -2229,6 +2501,8 @@ local function actual_line(entry)
 	return entry.actual_line
 end
 
+-- Record the resolved source line for a redirected breakpoint.
+-- 记录重定向断点对应的真实源码行。
 local function set_actual_mark(path, line)
 	local bufnr = ensure_buffer(path)
 	if not bufnr then
@@ -2239,16 +2513,22 @@ local function set_actual_mark(path, line)
 	return bufnr, mark_id
 end
 
+-- Remove the resolved source line marker for a breakpoint.
+-- 移除断点对应的真实源码行标记。
 local function remove_actual_mark(entry)
 	if entry.actual_bufnr and entry.actual_mark_id and vim.api.nvim_buf_is_valid(entry.actual_bufnr) then
 		pcall(vim.api.nvim_buf_del_extmark, entry.actual_bufnr, track_ns, entry.actual_mark_id)
 	end
 end
 
+-- Build the storage key for a redirected breakpoint.
+-- 构建重定向断点使用的存储键。
 local function redirect_key(path, line)
 	return string.format("%s:%d", normalize(path), tonumber(line) or 0)
 end
 
+-- Build a stable key for a breakpoint item.
+-- 为断点条目构建稳定键。
 local function breakpoint_item_key(item)
 	if not item then
 		return ""
@@ -2256,16 +2536,22 @@ local function breakpoint_item_key(item)
 	return redirect_key(item.display_path or item.actual_path, item.display_line or item.actual_line)
 end
 
+-- Return the mute state table for the project root.
+-- 返回项目根目录对应的断点静音状态表。
 local function breakpoint_mute_state(root)
 	root = root or active_root()
 	return root and state.breakpoint_mutes[root] or nil
 end
 
+-- Check whether all breakpoints are globally muted.
+-- 检查是否已全局静音所有断点。
 local function breakpoint_is_globally_muted(root)
 	local muted = breakpoint_mute_state(root)
 	return muted and muted.all_items ~= nil or false
 end
 
+-- Check whether the breakpoint item is muted.
+-- 检查该断点条目是否已静音。
 local function breakpoint_is_muted(root, item)
 	local muted = breakpoint_mute_state(root)
 	if not muted then
@@ -2277,6 +2563,8 @@ local function breakpoint_is_muted(root, item)
 	return muted.items_by_key and muted.items_by_key[breakpoint_item_key(item)] ~= nil or false
 end
 
+-- Return the original breakpoint item for redirected entries.
+-- 返回重定向条目对应的原始断点项。
 local function breakpoint_original_item(root, item)
 	local muted = breakpoint_mute_state(root)
 	if not muted then
@@ -2296,6 +2584,8 @@ local function breakpoint_original_item(root, item)
 	return nil
 end
 
+-- Place an overlay sign that reflects breakpoint mute state.
+-- 放置反映断点静音状态的覆盖 sign。
 local function place_overlay_sign(path, line, muted)
 	local bufnr = ensure_buffer(path)
 	if not bufnr then
@@ -2310,6 +2600,8 @@ local function place_overlay_sign(path, line, muted)
 	return bufnr, sign_id
 end
 
+-- Clear overlay signs for the given project root.
+-- 清理给定项目根目录的覆盖 sign。
 local function clear_overlay_signs(root)
 	local overlays = state.breakpoint_overlays[root or ""] or {}
 	for _, entry in ipairs(overlays) do
@@ -2323,6 +2615,8 @@ local function clear_overlay_signs(root)
 	state.breakpoint_overlays[root or ""] = {}
 end
 
+-- Clear overlay signs for every loaded project root.
+-- 清理所有已加载项目根目录的覆盖 sign。
 local function clear_all_overlay_signs()
 	for root, _ in pairs(state.breakpoint_overlays) do
 		clear_overlay_signs(root)
@@ -2360,6 +2654,8 @@ sync_breakpoint_overlays = function(root)
 	state.breakpoint_overlays[root] = overlays
 end
 
+-- Find the redirected breakpoint entry at the displayed location.
+-- 查找显示位置对应的重定向断点条目。
 local function entry_at_display(path, line)
 	local wanted_path = normalize(path)
 	for key, entry in pairs(state.redirected) do
@@ -2377,12 +2673,16 @@ active_root = function()
 	return project.find_project_root_from_context()
 end
 
+-- Check whether breakpoints are muted for the project.
+-- 检查该项目的断点是否已静音。
 local function breakpoints_muted(root)
 	root = root or active_root()
 	local muted = breakpoint_mute_state(root)
 	return muted and muted.all_items ~= nil or false
 end
 
+-- Sync project breakpoints into the active debug session.
+-- 将项目断点同步到当前激活的调试会话。
 local function sync_active_session_breakpoints(root)
 	root = root or active_root()
 	if not root or not dap_available() then
@@ -2470,6 +2770,8 @@ collect_project_breakpoints = function(root)
 	return items
 end
 
+-- Persist project breakpoints to disk.
+-- 将项目断点持久化到磁盘。
 local function save_project_breakpoints(root)
 	root = root or active_root()
 	if not root or not dap_available() then
@@ -2516,6 +2818,8 @@ local function save_project_breakpoints(root)
 	refresh_debug_ui_breakpoints()
 end
 
+-- Update the persisted record for a project breakpoint.
+-- 更新项目断点的持久化记录。
 local function set_breakpoint_record(root, item)
 	apply_breakpoint_record(item, false)
 
@@ -2541,6 +2845,8 @@ local function set_breakpoint_record(root, item)
 	end
 end
 
+-- Restore persisted breakpoints for the project root.
+-- 恢复项目根目录对应的持久化断点。
 local function restore_project_breakpoints(root)
 	root = root or active_root()
 	if not root or state.loaded_roots[root] or not dap_available() or breakpoints_muted(root) then
@@ -2561,6 +2867,8 @@ local function restore_project_breakpoints(root)
 	refresh_debug_ui_breakpoints()
 end
 
+-- Return the breakpoint item under the current cursor.
+-- 返回当前光标所在位置的断点条目。
 local function breakpoint_item_at_cursor(root)
 	root = root or active_root()
 	if not root or not dap_available() then
@@ -2638,6 +2946,8 @@ apply_breakpoint_record = function(item, muted)
 	}, actual_bufnr, item.actual_line)
 end
 
+-- Remove a redirected breakpoint and its tracking state.
+-- 移除重定向断点及其跟踪状态。
 local function remove_redirected_breakpoint(key, entry)
 	if not dap_available() then
 		return
@@ -2655,6 +2965,8 @@ local function remove_redirected_breakpoint(key, entry)
 	sync_active_session_breakpoints(entry.project_root)
 end
 
+-- Create a redirected breakpoint for a resolved source target.
+-- 为解析出的源码目标创建重定向断点。
 local function create_redirected_breakpoint(root, target)
 	local dap_breakpoints = require("dap.breakpoints")
 	local actual_bufnr = ensure_buffer(target.actual_path)
@@ -2706,12 +3018,16 @@ local function create_redirected_breakpoint(root, target)
 	)
 end
 
+-- Fallback to the default breakpoint toggle behavior.
+-- 回退到默认的断点切换行为。
 local function fallback_toggle_current_breakpoint(root)
 	require("dap").toggle_breakpoint()
 	save_project_breakpoints(root)
 	sync_active_session_breakpoints(root)
 end
 
+-- Save modified project buffers.
+-- 保存modified项目缓冲区。
 local function save_modified_project_buffers(root)
 	root = normalize(root)
 	if not root or root == "" then
@@ -2730,6 +3046,8 @@ local function save_modified_project_buffers(root)
 	end
 end
 
+-- Ensure the project is ready before starting a debug launch.
+-- 确保项目在启动调试前已经准备就绪。
 local function ensure_launch_ready(root, callback)
 	if (config.values.debug or {}).autosave_before_launch == false then
 		return callback(true)
@@ -2738,6 +3056,8 @@ local function ensure_launch_ready(root, callback)
 	callback(true)
 end
 
+-- Return a summarized DAP status for the current project root.
+-- 返回当前项目根目录的 DAP 摘要状态。
 local function dap_status(root)
 	root = root or active_root()
 	local ctx = root and project_context(root) or nil
@@ -2763,6 +3083,8 @@ local function dap_status(root)
 	}
 end
 
+-- Enumerate attachable runtime processes for the launch context.
+-- 枚举当前启动上下文下可附加的运行时进程。
 local function enumerate_processes(ctx, callback)
 	if not is_windows() then
 		return callback({}, "UDebugTool currently supports Windows only")
@@ -2770,6 +3092,8 @@ local function enumerate_processes(ctx, callback)
 
 	local names = {}
 	local seen_names = {}
+	-- Track unique process names so attach filtering stays tolerant of editor/game executable variants.
+	-- 记录唯一进程名，便于附加过滤同时兼容编辑器版和游戏版可执行文件变体。
 	local function add_name(name)
 		name = tostring(name or "")
 		if name == "" then
@@ -2783,6 +3107,8 @@ local function enumerate_processes(ctx, callback)
 		table.insert(names, name)
 	end
 
+	-- Derive a process name from an executable path and feed it back through the same dedupe path.
+	-- 从可执行文件路径提取进程名，并复用同一套去重逻辑。
 	local function add_exe_name(path)
 		path = normalize(path)
 		if not path or path == "" then
@@ -2873,6 +3199,8 @@ local function enumerate_processes(ctx, callback)
 	end)
 end
 
+-- Spawn the runtime process that should be attached.
+-- 启动需要被附加的运行时进程。
 local function spawn_runtime_process(ctx, callback)
 	local ps = vim.fn.executable("pwsh") == 1 and "pwsh" or "powershell"
 	local args = {}
@@ -2928,12 +3256,16 @@ local function spawn_runtime_process(ctx, callback)
 	end)
 end
 
+-- Wait for a matching attach target process to appear.
+-- 等待匹配的附加目标进程出现。
 local function wait_for_attach_target(ctx, preferred_pid, callback)
 	local started_at = vim.loop.hrtime()
 	local deadline = vim.loop.hrtime() + (30 * 1e9)
 	local timer = vim.loop.new_timer()
 	local done = false
 
+	-- Return the finish.
+	-- 返回finish。
 	local function finish(item, err)
 		if done then
 			return
@@ -2976,6 +3308,8 @@ local function wait_for_attach_target(ctx, preferred_pid, callback)
 	end))
 end
 
+-- Attach the debugger to the selected runtime process.
+-- 将调试器附加到选定的运行时进程。
 local function attach_with_process(process, ctx)
 	local pid = tonumber(process and process.pid or nil)
 	if not pid or pid <= 0 then
@@ -3033,6 +3367,8 @@ local function attach_with_process(process, ctx)
 	end)
 end
 
+-- Attach the requested state.
+-- 附加所需状态。
 function M.attach()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3055,6 +3391,8 @@ function M.attach()
 	end)
 end
 
+-- Pick process.
+-- 选择进程。
 function M.pick_process()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3086,6 +3424,8 @@ function M.pick_process()
 	end)
 end
 
+-- Launch the requested state.
+-- 启动所需状态。
 function M.launch(mode_override)
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3110,6 +3450,8 @@ function M.launch(mode_override)
 		end
 
 		state.launch_in_progress = true
+		-- Assemble launch metadata once, mirror it into the output panel, then hand control to nvim-dap.
+		-- 先统一组装启动元数据并同步到输出面板，再把控制权交给 nvim-dap。
 		local function do_launch(launch_ctx)
 			local env_lines = launch_environment_lines(launch_ctx.root, vim.fn.executable("pwsh") == 1 and "pwsh" or "powershell")
 			open_unreal_output(launch_ctx.root, {
@@ -3205,14 +3547,20 @@ function M.launch(mode_override)
 	end)
 end
 
+-- Launch editor.
+-- 启动编辑器。
 function M.launch_editor()
 	return M.launch("editor")
 end
 
+-- Launch game.
+-- 启动游戏。
 function M.launch_game()
 	return M.launch("game")
 end
 
+-- Continue the requested state.
+-- 继续所需状态。
 function M.continue()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3237,6 +3585,8 @@ function M.continue()
 	end)
 end
 
+-- Restart the requested state.
+-- 重启所需状态。
 function M.restart()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3248,6 +3598,8 @@ function M.restart()
 	M.continue()
 end
 
+-- Stop the requested state.
+-- 停止所需状态。
 function M.stop()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3259,6 +3611,8 @@ function M.stop()
 	vim.notify("UDebugTool: no active debug session", vim.log.levels.INFO)
 end
 
+-- Return the step over.
+-- 返回stepover。
 function M.step_over()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3266,6 +3620,8 @@ function M.step_over()
 	require("dap").step_over()
 end
 
+-- Return the step into.
+-- 返回stepinto。
 function M.step_into()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3273,6 +3629,8 @@ function M.step_into()
 	require("dap").step_into()
 end
 
+-- Return the step out.
+-- 返回stepout。
 function M.step_out()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3280,6 +3638,8 @@ function M.step_out()
 	require("dap").step_out()
 end
 
+-- Toggle UI.
+-- 切换UI。
 function M.toggle_ui()
 	local debug_ui = require("udebugtool.debug.ui")
 	if debug_ui.is_open and debug_ui.is_open() then
@@ -3293,6 +3653,8 @@ function M.toggle_ui()
 	debug_ui.open()
 end
 
+-- Return the dashboard.
+-- 返回dashboard。
 function M.dashboard()
 	local debug_ui = require("udebugtool.debug.ui")
 	if debug_ui.is_open and debug_ui.is_open() then
@@ -3308,6 +3670,8 @@ function M.dashboard()
 	return debug_ui.focus_primary()
 end
 
+-- Return the log.
+-- 返回日志。
 function M.log()
 	local debug_ui = require("udebugtool.debug.ui")
 	local panel = shared_output_panel()
@@ -3364,10 +3728,14 @@ function M.log()
 	return debug_ui.focus_console()
 end
 
+-- Toggle breakpoint.
+-- 切换断点。
 function M.toggle_breakpoint()
 	return M.toggle_breakpoint_with_opts({})
 end
 
+-- Toggle breakpoint with opts.
+-- 切换带有opts的断点。
 function M.toggle_breakpoint_with_opts(opts)
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3433,6 +3801,8 @@ function M.toggle_breakpoint_with_opts(opts)
 	fallback_toggle_current_breakpoint(root)
 end
 
+-- Return the conditional breakpoint.
+-- 返回conditional断点。
 function M.conditional_breakpoint()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3451,6 +3821,8 @@ function M.conditional_breakpoint()
 	end)
 end
 
+-- Return the logpoint.
+-- 返回logpoint。
 function M.logpoint()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3469,6 +3841,8 @@ function M.logpoint()
 	end)
 end
 
+-- Clear breakpoints.
+-- 清理断点。
 function M.clear_breakpoints()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3495,6 +3869,8 @@ function M.clear_breakpoints()
 	vim.notify("UDebugTool: cleared breakpoints", vim.log.levels.INFO)
 end
 
+-- Toggle breakpoint mute.
+-- 切换断点mute。
 function M.toggle_breakpoint_mute()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3544,6 +3920,8 @@ function M.toggle_breakpoint_mute()
 	vim.notify("UDebugTool: breakpoint muted", vim.log.levels.INFO)
 end
 
+-- Check whether toggle breakpoints is enabled.
+-- 检查toggle断点是否处于enabled状态。
 function M.toggle_breakpoints_enabled()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3607,6 +3985,8 @@ function M.toggle_breakpoints_enabled()
 	vim.notify("UDebugTool: breakpoints muted", vim.log.levels.INFO)
 end
 
+-- Return the list breakpoints.
+-- 返回list断点。
 function M.list_breakpoints()
 	if not dap_available() then
 		return notify_missing_dap()
@@ -3657,6 +4037,8 @@ function M.list_breakpoints()
 	})
 end
 
+-- Dispatch the requested state.
+-- 分发所需状态。
 function M.dispatch(tail)
 	local sub = (tail or ""):match("^%s*(%S+)")
 	sub = sub and sub:lower() or ""
@@ -3690,10 +4072,14 @@ UDebugTool debug subcommands:
 ]])
 end
 
+-- Return the status.
+-- 返回状态。
 function M.status(root)
 	return dap_status(root)
 end
 
+-- Return the prewarm.
+-- 返回prewarm。
 function M.prewarm()
 	local debug_config = config.values.debug or {}
 	if debug_config.enable == false then
@@ -3716,6 +4102,8 @@ function M.prewarm()
 	end, { silent = true })
 end
 
+-- Set up the requested state.
+-- 设置所需状态。
 function M.setup()
 	local debug_config = config.values.debug or {}
 	if debug_config.enable == false then
@@ -3858,6 +4246,8 @@ function M.setup()
 	end)
 end
 
+-- Reset the requested state.
+-- 重置所需状态。
 function M.reset()
 	pcall(vim.api.nvim_del_augroup_by_name, "UDebugTool")
 	stop_unreal_log_tail()

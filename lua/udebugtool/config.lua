@@ -1,3 +1,9 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/udebugtool/config.lua
+-- Purpose: Store defaults and merge user configuration for UDebugTool.
+-- License: MIT
+
 local M = {}
 
 local defaults = {
@@ -65,6 +71,8 @@ local defaults = {
 
 M.values = vim.deepcopy(defaults)
 
+-- Set up the requested state.
+-- 设置所需状态。
 function M.setup(opts)
 	M.values = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
 	return M.values

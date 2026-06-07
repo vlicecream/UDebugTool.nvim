@@ -1,3 +1,9 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/udebugtool/unreal.lua
+-- Purpose: Build Unreal command lines and stream build diagnostics into Neovim.
+-- License: MIT
+
 local config = require("udebugtool.config")
 local project = require("udebugtool.project")
 
@@ -18,6 +24,8 @@ local build_output = nil
 local on_build_line
 local current_context
 
+-- Return the shared output panel API when it is available.
+-- 在共享输出面板可用时返回对应的 API。
 local function shared_output_panel()
 	local panel = rawget(_G, "__ucore_output_panel_api")
 	if type(panel) == "table" and type(panel.open_tab) == "function" then
@@ -26,6 +34,8 @@ local function shared_output_panel()
 	return nil
 end
 
+-- Define the highlight groups used by the debug UI.
+-- 定义调试 UI 使用的高亮分组。
 local function setup_highlights()
 	if highlights_setup then
 		return
@@ -37,6 +47,8 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "UDebugToolBuildCommand", { fg = "#4FC1FF" })
 end
 
+-- Build line group.
+-- 构建行分组。
 local function build_line_group(text)
 	text = tostring(text or "")
 	local lower = text:lower()
@@ -66,6 +78,8 @@ local function build_line_group(text)
 	return nil
 end
 
+-- Return the local build group.
+-- 返回localbuild分组。
 local function local_build_group(group)
 	if group == "UCoreOutputCommand" then
 		return "UDebugToolBuildCommand"
@@ -82,30 +96,44 @@ local function local_build_group(group)
 	return group
 end
 
+-- Normalize path separators in the given path.
+-- 规范化给定路径中的分隔符。
 local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
 end
 
+-- Return the readable.
+-- 返回readable。
 local function readable(path)
 	return path and vim.fn.filereadable(path) == 1
 end
 
+-- Return the executable.
+-- 返回可执行文件。
 local function executable(path)
 	return path and (vim.fn.executable(path) == 1 or readable(path))
 end
 
+-- Return the powershell.
+-- 返回powershell。
 local function powershell()
 	return vim.fn.executable("pwsh") == 1 and "pwsh" or "powershell"
 end
 
+-- Quote text for safe PowerShell usage.
+-- 为 PowerShell 安全使用转义文本。
 local function ps_quote(text)
 	return "'" .. tostring(text):gsub("'", "''") .. "'"
 end
 
+-- Build BAT.
+-- 构建BAT。
 local function build_bat(engine_root)
 	return normalize(engine_root .. "/Engine/Build/BatchFiles/Build.bat")
 end
 
+-- Return the configuration editor EXE.
+-- 返回configuration编辑器EXE。
 local function configuration_editor_exe(engine_root, platform, configuration)
 	configuration = tostring(configuration or "")
 	if configuration == "" or configuration == "Development" then
@@ -127,6 +155,8 @@ local function configuration_editor_exe(engine_root, platform, configuration)
 	return nil
 end
 
+-- Return the editor EXE.
+-- 返回编辑器EXE。
 local function editor_exe(engine_root, platform, configuration)
 	if (config.values.debug or {}).prefer_configuration_executable ~= false then
 		local configured = configuration_editor_exe(engine_root, platform, configuration)
@@ -149,10 +179,14 @@ local function editor_exe(engine_root, platform, configuration)
 	return nil
 end
 
+-- Return the editor executable.
+-- 返回编辑器可执行文件。
 function M.editor_executable(engine_root, platform, configuration)
 	return editor_exe(engine_root, platform, configuration)
 end
 
+-- Normalize startup mode.
+-- 规范化startup模式。
 local function normalize_startup_mode(mode)
 	mode = tostring(mode or ""):lower()
 	if mode == "game" then
@@ -161,6 +195,8 @@ local function normalize_startup_mode(mode)
 	return "editor"
 end
 
+-- Return the startup defaults.
+-- 返回startupdefaults。
 local function startup_defaults(ctx, mode_override)
 	local startup = config.values.startup or {}
 	local mode = normalize_startup_mode(mode_override or startup.mode)
@@ -180,6 +216,8 @@ local function startup_defaults(ctx, mode_override)
 	}
 end
 
+-- Return the startup profile.
+-- 返回startup配置档。
 function M.startup_profile(root, mode_override)
 	local ctx, err = current_context(root)
 	if not ctx then
@@ -190,6 +228,8 @@ function M.startup_profile(root, mode_override)
 	return vim.tbl_extend("force", ctx, defaults), nil
 end
 
+-- Return the game EXE candidates.
+-- 返回游戏EXE候选项。
 local function game_exe_candidates(root, target, platform, configuration, project_name)
 	local base = normalize(root .. "/Binaries/" .. tostring(platform))
 	local items = {
@@ -205,6 +245,8 @@ local function game_exe_candidates(root, target, platform, configuration, projec
 	return items
 end
 
+-- Return the game executable.
+-- 返回游戏可执行文件。
 function M.game_executable(root, opts)
 	opts = opts or {}
 	local target = opts.target or project.game_target_name(root)
@@ -221,6 +263,8 @@ function M.game_executable(root, opts)
 	return nil
 end
 
+-- Launch profile.
+-- 启动配置档。
 function M.launch_profile(root, mode_override)
 	local profile, err = M.startup_profile(root, mode_override)
 	if not profile then
@@ -259,6 +303,8 @@ function M.launch_profile(root, mode_override)
 	return profile, nil
 end
 
+-- Return the current context.
+-- 返回current上下文。
 function current_context(root)
 	root = root or project.find_project_root_from_context()
 	if not root then
@@ -284,10 +330,14 @@ function current_context(root)
 	}, nil
 end
 
+-- Return the current context.
+-- 返回current上下文。
 function M.current_context(root)
 	return current_context(root)
 end
 
+-- Save modified project buffers.
+-- 保存modified项目缓冲区。
 local function save_modified_project_buffers(root)
 	root = normalize(root)
 	if not root or root == "" then
@@ -306,6 +356,8 @@ local function save_modified_project_buffers(root)
 	end
 end
 
+-- Build command.
+-- 构建命令。
 local function build_command(ctx, opts)
 	local bat = build_bat(ctx.engine_root)
 	if not readable(bat) then
@@ -319,6 +371,8 @@ local function build_command(ctx, opts)
 	local args = {}
 
 	if build.use_target_arguments ~= false then
+		-- Encode one UBT `-Target=` triple so project, platform, and extra flags always travel together.
+		-- 把一个 UBT `-Target=` 三元组编码成单个参数，确保项目、平台和附加标志始终一起传递。
 		local function target_arg(name, target_platform, target_config, extra)
 			local spec = table.concat({
 				tostring(name),
@@ -368,6 +422,8 @@ local function build_command(ctx, opts)
 	return { powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script }, nil
 end
 
+-- Parse build args.
+-- 解析buildargs。
 local function parse_build_args(args, ctx, mode_override)
 	args = vim.trim(args or "")
 	local tokens = {}
@@ -383,6 +439,8 @@ local function parse_build_args(args, ctx, mode_override)
 	}
 end
 
+-- Create log buffer.
+-- 创建日志缓冲区。
 local function create_log_buffer(title)
 	local previous_win = vim.api.nvim_get_current_win()
 	vim.cmd("botright 15new")
@@ -408,6 +466,8 @@ local function create_log_buffer(title)
 	return buf
 end
 
+-- Scroll to to bottom.
+-- 滚动到bottom。
 local function scroll_to_bottom(buf)
 	for _, win in ipairs(vim.fn.win_findbuf(buf)) do
 		local line_count = vim.api.nvim_buf_line_count(buf)
@@ -415,6 +475,8 @@ local function scroll_to_bottom(buf)
 	end
 end
 
+-- Append lines.
+-- 追加多行内容。
 local function append_lines(buf, data, on_line)
 	if not data or data == "" then
 		return
@@ -447,6 +509,8 @@ local function append_lines(buf, data, on_line)
 	end)
 end
 
+-- Parse diagnostic line.
+-- 解析diagnostic行。
 local function parse_diagnostic_line(line, project_root)
 	local path, lnum, col, kind, msg = line:match(
 		"^(.-)%((%d+)(?:,(%d+))?%)%s*:%s*(error|warning)%s+(.+)$"
@@ -489,6 +553,8 @@ local function parse_diagnostic_line(line, project_root)
 	return nil
 end
 
+-- Return the color build line.
+-- 返回colorbuild行。
 local function color_build_line(buf, line_num, text)
 	if not config.values.build.color_log then
 		return
@@ -506,6 +572,8 @@ local function color_build_line(buf, line_num, text)
 	end
 end
 
+-- Return the split lines.
+-- 返回split多行内容。
 local function split_lines(data)
 	if not data or data == "" then
 		return {}
@@ -519,6 +587,8 @@ local function split_lines(data)
 	return lines
 end
 
+-- Build output sink.
+-- 构建输出sink。
 local function build_output_sink(title)
 	local panel = shared_output_panel()
 	if panel then
@@ -540,6 +610,8 @@ local function build_output_sink(title)
 	}
 end
 
+-- Append build chunk.
+-- 追加buildchunk。
 local function append_build_chunk(sink, project_root, data, no_parse)
 	if not data or data == "" then
 		return
@@ -552,6 +624,8 @@ local function append_build_chunk(sink, project_root, data, no_parse)
 		end
 
 		local groups = {}
+		-- Parse diagnostics while streaming so the output panel and quickfix list stay in sync.
+		-- 在流式输出时同步解析诊断，确保输出面板与 quickfix 列表始终一致。
 		for i, line_text in ipairs(lines) do
 			if not no_parse then
 				local item = parse_diagnostic_line(line_text, project_root)
@@ -579,6 +653,8 @@ local function append_build_chunk(sink, project_root, data, no_parse)
 	end)
 end
 
+-- Fill quickfix.
+-- 填充快速修复列表。
 local function fill_quickfix()
 	if vim.tbl_isempty(build_diagnostics) then
 		return
@@ -598,6 +674,8 @@ local function fill_quickfix()
 	end
 end
 
+-- Build summary.
+-- 构建摘要。
 local function build_summary(ok, exit_code)
 	local parts = {}
 	table.insert(parts, ok and "Build succeeded" or "Build failed")
@@ -628,6 +706,8 @@ on_build_line = function(project_root, buf, line_num, text, no_parse)
 	color_build_line(buf, line_num, text)
 end
 
+-- Reset diagnostics.
+-- 重置diagnostics。
 local function reset_diagnostics()
 	build_diagnostics = {}
 	build_error_count = 0
@@ -635,6 +715,8 @@ local function reset_diagnostics()
 	build_cancelled = false
 end
 
+-- Start build.
+-- 启动build。
 local function start_build(args, callback, mode_override)
 	callback = callback or function() end
 
@@ -666,6 +748,8 @@ local function start_build(args, callback, mode_override)
 	local title = string.format("UDebugTool build: %s %s %s", opts.target, opts.platform, opts.configuration)
 	local sink = build_output_sink(title)
 	build_output = sink
+	-- Build output can target either the shared panel or a scratch buffer, but both flows share the same parser.
+	-- 构建输出既可能进入共享面板，也可能进入临时缓冲区，但两条路径复用同一套解析逻辑。
 	if sink.kind == "buffer" then
 		build_buf = sink.buf
 	end
@@ -742,10 +826,14 @@ local function start_build(args, callback, mode_override)
 	build_pid = build_job and build_job.pid or nil
 end
 
+-- Check whether windows.
+-- 检查是否窗口。
 local function is_windows()
 	return package.config:sub(1, 1) == "\\"
 end
 
+-- Return the kill process tree.
+-- 返回kill进程tree。
 local function kill_process_tree(pid)
 	if not pid then
 		return false
@@ -762,14 +850,20 @@ local function kill_process_tree(pid)
 	return false
 end
 
+-- Build the requested state.
+-- 构建所需状态。
 function M.build(args)
 	start_build(args)
 end
 
+-- Build async.
+-- 构建async。
 function M.build_async(args, callback, mode_override)
 	start_build(args, callback, mode_override)
 end
 
+-- Return the cancel build.
+-- 返回cancelbuild。
 function M.cancel_build()
 	if not build_job then
 		return vim.notify("No UDebugTool build is running", vim.log.levels.INFO)

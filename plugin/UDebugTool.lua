@@ -1,3 +1,11 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: plugin/UDebugTool.lua
+-- Purpose: Bootstrap the plugin lifecycle and reload guard for UDebugTool.
+-- License: MIT
+
+-- Unload the current UDebugTool module graph before reloading.
+-- 在重新加载前卸载当前 UDebugTool 模块图。
 local function unload_udebugtool()
 	local ok, existing = pcall(require, "udebugtool")
 	if ok and type(existing) == "table" and type(existing.reset) == "function" then

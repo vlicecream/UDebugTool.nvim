@@ -1,12 +1,22 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/udebugtool/commands/init.lua
+-- Purpose: Register and dispatch user commands for the plugin entrypoint.
+-- License: MIT
+
 local actions = require("udebugtool.commands.actions")
 
 local M = {}
 
+-- Normalize subcommand.
+-- 规范化subcommand。
 local function normalize_subcommand(args)
 	local sub = (args.args or ""):match("^%s*(%S+)")
 	return sub and sub:lower() or "help"
 end
 
+-- Dispatch the requested state.
+-- 分发所需状态。
 function M.dispatch(args)
 	local sub = normalize_subcommand(args)
 	local handlers = {
@@ -36,6 +46,8 @@ function M.dispatch(args)
 	handler()
 end
 
+-- Register the requested state.
+-- 注册所需状态。
 function M.register()
 	pcall(vim.api.nvim_del_user_command, "UDebugTool")
 

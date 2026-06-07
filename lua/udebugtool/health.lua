@@ -1,3 +1,9 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/udebugtool/health.lua
+-- Purpose: Report health checks for required tools and runtime dependencies.
+-- License: MIT
+
 local debug = require("udebugtool.debug")
 local project = require("udebugtool.project")
 
@@ -10,10 +16,14 @@ local warn = health.warn or health.report_warn
 local error = health.error or health.report_error
 local info = health.info or health.report_info
 
+-- Check whether dir.
+-- 检查是否目录。
 local function is_dir(path)
 	return path and vim.fn.isdirectory(path) == 1
 end
 
+-- Check the requested state.
+-- 检查所需状态。
 function M.check()
 	start("UDebugTool.nvim")
 
